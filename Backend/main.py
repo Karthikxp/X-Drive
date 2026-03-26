@@ -111,6 +111,13 @@ def main():
     final_img.save(final_path, format="AVIF", quality=args.avif_quality, subsampling='4:2:0')  # Optimized AVIF
     print(f"Saved final compressed image to {final_path}")
 
+    # Copy original NOW so it's available for comparison as soon as the AVIF is detected
+    if args.originals_dir:
+        os.makedirs(args.originals_dir, exist_ok=True)
+        orig_dest = os.path.join(args.originals_dir, os.path.basename(args.input))
+        shutil.copy2(args.input, orig_dest)
+        print(f"Copied original to {orig_dest}")
+
     # 5. Compression Metrics
     print("\n--- Compression Metrics ---")
     orig_size = os.path.getsize(args.input)
@@ -169,18 +176,12 @@ def main():
 
     print("\n--- Pipeline Completed Successfully ---")
 
-    # Move original to originals_dir (for comparison), or delete it
+    # Remove the original from user_photos (already copied to originals/ above)
     try:
-        if args.originals_dir:
-            os.makedirs(args.originals_dir, exist_ok=True)
-            dest = os.path.join(args.originals_dir, os.path.basename(args.input))
-            shutil.move(args.input, dest)
-            print(f"Moved original to {dest}")
-        else:
-            os.remove(args.input)
-            print(f"Cleaned up input file: {args.input}")
+        os.remove(args.input)
+        print(f"Cleaned up input file: {args.input}")
     except OSError as e:
-        print(f"Warning: could not handle input file {args.input}: {e}")
+        print(f"Warning: could not remove input file {args.input}: {e}")
 
 
 if __name__ == "__main__":

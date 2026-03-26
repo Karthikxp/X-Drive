@@ -90,7 +90,7 @@ export default function App() {
   const [showingSummary, setShowingSummary] = useState(false);
   const [showingSlider, setShowingSlider] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
-  const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const [pendingQueue, setPendingQueue] = useState(0);
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -529,11 +529,6 @@ export default function App() {
             Drive
           </button>
           <div className="flex items-center gap-2">
-            {images.length > 1 && (
-              <span className="text-white/50 text-sm font-medium tabular-nums mr-1">
-                {selectedIndex + 1} / {images.length}
-              </span>
-            )}
             {/* Download */}
             <a
               href={selectedImage.url}
@@ -634,9 +629,16 @@ export default function App() {
         {/* Bottom info */}
         <div className="flex-shrink-0 px-6 pt-3 pb-8">
           <h2 className="text-white text-3xl font-bold tracking-tight">{selectedImage.title}</h2>
-          {selectedImage.size != null && (
-            <p className="text-white/40 text-sm mt-1">{formatSize(selectedImage.size)}</p>
-          )}
+          <div className="flex items-center justify-between mt-1">
+            {selectedImage.size != null && (
+              <p className="text-white/40 text-sm">{formatSize(selectedImage.size)}</p>
+            )}
+            {images.length > 1 && (
+              <span className="text-white/40 text-sm font-medium tabular-nums">
+                {selectedIndex + 1} / {images.length}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Compression summary overlay */}
@@ -713,52 +715,48 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Slider area */}
+              {/* Slider area — pointer capture on container, ref-based drag state */}
               <div
                 ref={sliderContainerRef}
-                className="flex-1 relative overflow-hidden select-none"
-                onPointerMove={(e) => {
-                  if (!isDragging || !sliderContainerRef.current) return;
-                  const rect = sliderContainerRef.current.getBoundingClientRect();
+                className="flex-1 relative overflow-hidden"
+                style={{ touchAction: 'none', userSelect: 'none', cursor: 'ew-resize' }}
+                onPointerDown={(e) => {
+                  isDraggingRef.current = true;
+                  (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                  const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
                   setSliderPos(Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)));
                 }}
-                onPointerUp={() => setIsDragging(false)}
-                onPointerLeave={() => setIsDragging(false)}
+                onPointerMove={(e) => {
+                  if (!isDraggingRef.current) return;
+                  const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                  setSliderPos(Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)));
+                }}
+                onPointerUp={() => { isDraggingRef.current = false; }}
+                onPointerCancel={() => { isDraggingRef.current = false; }}
               >
-                {/* Compressed image — full background (right side) */}
+                {/* Compressed image — full background */}
                 <img
                   src={selectedImage.url}
                   alt="Compressed"
                   className="absolute inset-0 w-full h-full object-contain"
                   draggable={false}
+                  style={{ pointerEvents: 'none' }}
                 />
                 {/* Original image — clipped to left portion */}
                 <img
                   src={selectedImage.originalUrl}
                   alt="Original"
                   className="absolute inset-0 w-full h-full object-contain"
-                  style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
+                  style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)`, pointerEvents: 'none' }}
                   draggable={false}
                 />
 
-                {/* Divider line + draggable handle */}
+                {/* Divider line + handle — pointer-events none so container captures all */}
                 <div
-                  className="absolute top-0 bottom-0 w-0.5 bg-white/80 shadow-[0_0_10px_rgba(255,255,255,0.6)] cursor-ew-resize z-10"
-                  style={{ left: `${sliderPos}%`, transform: 'translateX(-50%)' }}
+                  className="absolute top-0 bottom-0 w-0.5 bg-white/80 shadow-[0_0_10px_rgba(255,255,255,0.6)] z-10"
+                  style={{ left: `${sliderPos}%`, transform: 'translateX(-50%)', pointerEvents: 'none' }}
                 >
-                  <div
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-11 h-11 rounded-full bg-white shadow-xl flex items-center justify-center gap-0.5 cursor-ew-resize"
-                    onPointerDown={(e) => {
-                      setIsDragging(true);
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                    }}
-                    onPointerMove={(e) => {
-                      if (!isDragging || !sliderContainerRef.current) return;
-                      const rect = sliderContainerRef.current.getBoundingClientRect();
-                      setSliderPos(Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)));
-                    }}
-                    onPointerUp={() => setIsDragging(false)}
-                  >
+                  <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-11 h-11 rounded-full bg-white shadow-xl flex items-center justify-center gap-0.5">
                     <ChevronLeft className="w-3.5 h-3.5 text-black" />
                     <ChevronRight className="w-3.5 h-3.5 text-black" />
                   </div>
