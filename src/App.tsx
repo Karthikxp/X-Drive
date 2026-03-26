@@ -313,7 +313,7 @@ export default function App() {
             </Button>
           </div>
           <button onClick={handleLogin} className="text-sm font-medium mt-8 hover:underline">
-            **** DUMMY LOGIN PASS ****
+            **** DUMMY LOGIN PASS *****
           </button>
         </div>
       </div>
@@ -327,16 +327,16 @@ export default function App() {
     const hasFiles = pendingFiles.length > 0;
 
     return (
-      <div className="min-h-screen bg-black text-white p-6 font-sans flex flex-col">
+      <div className="fixed inset-0 bg-black text-white font-sans flex flex-col overflow-y-auto">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex justify-between items-center mb-8 px-6 pt-6">
           <Logo dark />
           <button onClick={clearUpload} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors">
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col w-full max-w-md mx-auto">
+        <div className="flex-1 flex flex-col w-full max-w-md mx-auto px-6 pb-6">
           <h1 className="text-4xl font-bold tracking-tight mb-6">File upload</h1>
 
           {/* Hidden file input — multiple */}
@@ -703,43 +703,13 @@ export default function App() {
               </Pill>
             ))}
 
-            {creatingFolder ? (
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <input
-                  ref={newFolderInputRef}
-                  autoFocus
-                  type="text"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleCreateFolder();
-                    if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); }
-                  }}
-                  placeholder="Folder name…"
-                  className="px-4 py-2 rounded-full border border-black/30 text-sm font-medium outline-none focus:border-black w-36"
-                />
-                <button
-                  onClick={handleCreateFolder}
-                  className="px-4 py-2 rounded-full bg-black text-white text-sm font-medium whitespace-nowrap"
-                >
-                  Create
-                </button>
-                <button
-                  onClick={() => { setCreatingFolder(false); setNewFolderName(''); }}
-                  className="p-2 rounded-full hover:bg-gray-100"
-                >
-                  <X className="w-4 h-4 text-black/40" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setCreatingFolder(true)}
-                className="flex-shrink-0 px-5 py-2 rounded-full border border-dashed border-black/25 text-sm font-medium text-black/40 hover:bg-gray-50 hover:border-black/40 transition-colors whitespace-nowrap flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New folder
-              </button>
-            )}
+            <button
+              onClick={() => setCreatingFolder(true)}
+              className="flex-shrink-0 px-5 py-2 rounded-full border border-dashed border-black/25 text-sm font-medium text-black/40 hover:bg-gray-50 hover:border-black/40 transition-colors whitespace-nowrap flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New folder
+            </button>
           </div>
         </section>
 
@@ -785,6 +755,65 @@ export default function App() {
       >
         <Plus className="w-8 h-8" />
       </button>
+
+      {/* New folder modal */}
+      <AnimatePresence>
+        {creatingFolder && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
+              onClick={() => { setCreatingFolder(false); setNewFolderName(''); }}
+            />
+
+            {/* Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 32 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 32 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[88%] max-w-sm bg-white rounded-3xl p-6 shadow-2xl"
+            >
+              <h3 className="text-xl font-bold tracking-tight mb-1">New album</h3>
+              <p className="text-black/40 text-sm mb-5">Choose a name for this folder</p>
+
+              <input
+                ref={newFolderInputRef}
+                autoFocus
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreateFolder();
+                  if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); }
+                }}
+                placeholder="e.g. Trip 2025"
+                style={{ fontSize: '16px' }}
+                className="w-full px-5 py-4 rounded-full border-1 border-black/10 focus:border-black font-light outline-none transition-colors mb-4"
+              />
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setCreatingFolder(false); setNewFolderName(''); }}
+                  className="flex-1 py-3.5 rounded-full border-2 border-black/10 text-black font-medium active:scale-95 transition-transform"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateFolder}
+                  className="flex-1 py-3.5 rounded-full bg-black text-white font-medium active:scale-95 transition-transform"
+                >
+                  Create
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
