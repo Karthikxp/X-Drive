@@ -63,6 +63,18 @@ function uploadPlugin(): Plugin {
         next();
       });
 
+      // Serve Backend/output/ as static files under /output/
+      const outputDir = path.join(process.cwd(), 'Backend', 'output');
+      server.middlewares.use('/output', (req: any, res: any, next: any) => {
+        const filePath = path.join(outputDir, decodeURIComponent((req.url as string).replace(/^\//, '')));
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          res.setHeader('Content-Type', 'image/png');
+          fs.createReadStream(filePath).pipe(res);
+        } else {
+          next();
+        }
+      });
+
       // Serve storage/ and its subfolders as static files under /storage/
       server.middlewares.use('/storage', (req: any, res: any, next: any) => {
         const filePath = path.join(storageDir, decodeURIComponent((req.url as string).replace(/^\//, '')));

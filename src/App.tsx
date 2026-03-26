@@ -1,4 +1,4 @@
-import { Apple, Check, ChevronLeft, ChevronRight, Folder, Image as ImageIcon, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Apple, BarChart2, Check, ChevronLeft, ChevronRight, Folder, Image as ImageIcon, Plus, Trash2, Upload, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './lib/utils';
@@ -84,6 +84,7 @@ export default function App() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [showingSummary, setShowingSummary] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -122,11 +123,12 @@ export default function App() {
     setCurrentScreen('view');
   };
 
-  const closeImageView = () => { setConfirmingDelete(false); setCurrentScreen('home'); };
+  const closeImageView = () => { setConfirmingDelete(false); setShowingSummary(false); setCurrentScreen('home'); };
 
   const goNext = () => {
     if (selectedIndex < images.length - 1) {
       setConfirmingDelete(false);
+      setShowingSummary(false);
       setSlideDirection(1);
       setSelectedIndex((i) => i + 1);
     }
@@ -135,6 +137,7 @@ export default function App() {
   const goPrev = () => {
     if (selectedIndex > 0) {
       setConfirmingDelete(false);
+      setShowingSummary(false);
       setSlideDirection(-1);
       setSelectedIndex((i) => i - 1);
     }
@@ -502,15 +505,24 @@ export default function App() {
             </svg>
             Drive
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {images.length > 1 && (
-              <span className="text-white/50 text-sm font-medium tabular-nums">
+              <span className="text-white/50 text-sm font-medium tabular-nums mr-1">
                 {selectedIndex + 1} / {images.length}
               </span>
             )}
             <button
+              onClick={() => { setShowingSummary(true); setConfirmingDelete(false); }}
+              className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-1.5"
+              title="Visualize compression"
+            >
+              <BarChart2 className="w-4 h-4 text-white/70" />
+              <span className="text-white/70 text-xs font-medium">Visualize</span>
+            </button>
+            <button
               onClick={() => setConfirmingDelete(true)}
               className="w-9 h-9 rounded-full bg-white/10 hover:bg-red-500/30 transition-colors flex items-center justify-center"
+              title="Delete photo"
             >
               <Trash2 className="w-4 h-4 text-white/70" />
             </button>
@@ -582,6 +594,56 @@ export default function App() {
             <p className="text-white/40 text-sm mt-1">{formatSize(selectedImage.size)}</p>
           )}
         </div>
+
+        {/* Compression summary overlay */}
+        <AnimatePresence>
+          {showingSummary && (() => {
+            const summaryFilename = selectedImage.id.replace(/_step4_final_compressed\.[^.]+$/, '_compression_summary.png');
+            const summaryUrl = `/output/${encodeURIComponent(summaryFilename)}`;
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: '100%' }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: '100%' }}
+                transition={{ type: 'spring', stiffness: 320, damping: 36 }}
+                className="absolute inset-0 z-40 bg-black flex flex-col"
+              >
+                {/* Summary top bar */}
+                <div className="flex-shrink-0 flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/10">
+                  <div>
+                    <p className="text-white font-semibold text-sm">Compression pipeline</p>
+                    <p className="text-white/40 text-xs mt-0.5">{selectedImage.title}</p>
+                  </div>
+                  <button
+                    onClick={() => setShowingSummary(false)}
+                    className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center justify-center"
+                  >
+                    <X className="w-4 h-4 text-white" />
+                  </button>
+                </div>
+
+                {/* Scrollable image area — screen height, natural width, horizontal scroll */}
+                <div className="flex-1 overflow-x-auto overflow-y-hidden h-full">
+                  <img
+                    src={summaryUrl}
+                    alt="Compression summary"
+                    style={{ height: '100%', width: 'auto', maxWidth: 'none', touchAction: 'pan-x pinch-zoom', display: 'block' }}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                      (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty('display', 'flex');
+                    }}
+                  />
+                  <div
+                    style={{ display: 'none' }}
+                    className="h-full min-h-[200px] items-center justify-center text-white/30 text-sm"
+                  >
+                    Summary not available yet — compression may still be running.
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })()}
+        </AnimatePresence>
 
         {/* Delete confirmation overlay */}
         <AnimatePresence>
