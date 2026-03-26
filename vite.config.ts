@@ -148,6 +148,9 @@ function uploadPlugin(): Plugin {
 
           // Determine target storage and originals subfolders
           const folder = ((req.body?.folder as string) || 'gallery').replace(/[/\\]/g, '');
+          const preset = ['storage', 'balanced', 'quality'].includes(req.body?.preset as string)
+            ? (req.body.preset as string)
+            : 'balanced';
           const targetStorageDir = path.join(storageDir, folder);
           const targetOriginalsDir = path.join(originalsDir, folder);
           fs.mkdirSync(targetStorageDir, { recursive: true });
@@ -162,6 +165,7 @@ function uploadPlugin(): Plugin {
                 '--input', filePath,
                 '--storage_dir', targetStorageDir,
                 '--originals_dir', targetOriginalsDir,
+                '--preset', preset,
               ],
               { cwd: backendDir, stdio: 'ignore' }
             );

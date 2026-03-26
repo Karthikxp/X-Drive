@@ -92,6 +92,7 @@ export default function App() {
   const [sliderPos, setSliderPos] = useState(50);
   const isDraggingRef = useRef(false);
   const [pendingQueue, setPendingQueue] = useState(0);
+  const [preset, setPreset] = useState<'storage' | 'balanced' | 'quality'>('balanced');
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
@@ -297,6 +298,7 @@ export default function App() {
         formData.append('image', file, file.name);
         formData.append('originalName', file.name.replace(/\.[^/.]+$/, ''));
         formData.append('folder', activeFolder);
+        formData.append('preset', preset);
 
         const response = await fetch('/api/upload', { method: 'POST', body: formData });
         if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
@@ -444,8 +446,36 @@ export default function App() {
             </div>
           )}
 
+          {/* Preset selector */}
+          <div className="mt-6">
+            <p className="text-white/40 text-xs font-medium uppercase tracking-wider mb-3">Compression preset</p>
+            <div className="grid grid-cols-3 gap-2">
+              {([ 
+                { id: 'storage',  label: 'Storage',  sub: 'Max compression',     ratio: '8–15×' },
+                { id: 'balanced', label: 'Balanced', sub: 'Smart trade-off',      ratio: '4–8×'  },
+                { id: 'quality',  label: 'Quality',  sub: 'Best visual fidelity', ratio: '2–4×'  },
+              ] as const).map(({ id, label, sub, ratio }) => (
+                <button
+                  key={id}
+                  onClick={() => setPreset(id)}
+                  disabled={isProcessing}
+                  className={cn(
+                    'rounded-2xl px-3 py-3 text-left transition-all',
+                    preset === id
+                      ? 'bg-white text-black'
+                      : 'bg-white/8 text-white/60 hover:bg-white/12'
+                  )}
+                >
+                  <p className={cn('text-sm font-bold', preset === id ? 'text-black' : 'text-white')}>{label}</p>
+                  <p className={cn('text-[10px] mt-0.5 leading-tight', preset === id ? 'text-black/50' : 'text-white/35')}>{sub}</p>
+                  <p className={cn('text-xs font-semibold mt-1.5', preset === id ? 'text-black/70' : 'text-white/40')}>{ratio}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Bottom action */}
-          <div className="mt-6 pb-4">
+          <div className="mt-4 pb-4">
             {!hasFiles ? (
               <button
                 onClick={() => fileInputRef.current?.click()}

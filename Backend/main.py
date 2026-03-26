@@ -7,6 +7,54 @@ import pillow_avif  # For AVIF support
 import numpy as np
 import matplotlib.pyplot as plt
 
+# ---------------------------------------------------------------------------
+# Preset definitions — each preset tunes every layer of the pipeline:
+#   avif_quality        : final AVIF encoder quality (lower = smaller file)
+#   base_quality        : quality_factor for the background (base) layer [0–1]
+#   enhancement_quality : quality_factor for the salient (enhancement) layer [0–1]
+#   saliency_threshold  : pixels below this saliency score are treated as background
+#   gamma               : reshapes ACRD bit-weight curve (>1 = more binary split)
+#   weight_floor        : minimum bit-weight for every pixel (0 = pure base for bg)
+#   weight_ceiling      : cap on maximum bit-weight (limits peak quality expenditure)
+#   downsample_factor   : how aggressively the base layer is spatially downsampled
+#   base_blur_multiplier: blur intensity multiplier for the base (background) layer
+# ---------------------------------------------------------------------------
+PRESETS = {
+    'storage': {
+        'avif_quality':          20,
+        'base_quality':          0.05,
+        'enhancement_quality':   0.82,
+        'saliency_threshold':    0.22,
+        'gamma':                 1.6,
+        'weight_floor':          0.0,
+        'weight_ceiling':        0.88,
+        'downsample_factor':     8,
+        'base_blur_multiplier':  3.5,
+    },
+    'balanced': {
+        'avif_quality':          28,
+        'base_quality':          0.10,
+        'enhancement_quality':   0.90,
+        'saliency_threshold':    0.15,
+        'gamma':                 1.0,
+        'weight_floor':          0.0,
+        'weight_ceiling':        1.0,
+        'downsample_factor':     6,
+        'base_blur_multiplier':  2.5,
+    },
+    'quality': {
+        'avif_quality':          38,
+        'base_quality':          0.20,
+        'enhancement_quality':   0.95,
+        'saliency_threshold':    0.08,
+        'gamma':                 0.7,
+        'weight_floor':          0.12,
+        'weight_ceiling':        1.0,
+        'downsample_factor':     4,
+        'base_blur_multiplier':  1.5,
+    },
+}
+
 # Import custom modules
 from modules.saliency import get_saliency_map, download_weights
 from modules.object_detection import get_object_segmentation_map
@@ -27,8 +75,24 @@ def main():
     parser.add_argument("--use_spectral", action="store_true", default=True, help="Use Spectral Residual saliency to enhance")
     parser.add_argument("--storage_dir", type=str, default=None, help="Directory to save the final compressed AVIF (overrides default storage/ folder)")
     parser.add_argument("--originals_dir", type=str, default=None, help="Directory to move the original input file after compression")
+    parser.add_argument("--preset", type=str, default="balanced", choices=["storage", "balanced", "quality"],
+                        help="Compression preset: storage (max compression), balanced (default), quality (best fidelity)")
 
     args = parser.parse_args()
+
+    # Resolve preset — individual flags override preset values if explicitly passed
+    p = PRESETS[args.preset]
+    avif_quality        = p['avif_quality']
+    base_quality        = p['base_quality']
+    enhancement_quality = p['enhancement_quality']
+    saliency_threshold  = p['saliency_threshold']
+    gamma               = p['gamma']
+    weight_floor        = p['weight_floor']
+    weight_ceiling      = p['weight_ceiling']
+    downsample_factor   = p['downsample_factor']
+    base_blur_multiplier = p['base_blur_multiplier']
+
+    print(f"[preset={args.preset}] avif_quality={avif_quality}, saliency_threshold={saliency_threshold}, gamma={gamma}, weight_floor={weight_floor}, ceiling={weight_ceiling}, downsample={downsample_factor}x, blur_mult={base_blur_multiplier}")
 
     # 1. Create output directory and get input filename prefix
     os.makedirs(args.output_dir, exist_ok=True)
@@ -72,12 +136,15 @@ def main():
     # print(f"Saved saliency map to {sal_path}")
 
     # 5. Bit Allocation (ACRD Function)
-    print(f"Step 2: Calculating Combined Bit Allocation (ACRD, threshold={args.saliency_threshold})...")
+    print(f"Step 2: Calculating Combined Bit Allocation (ACRD, threshold={saliency_threshold}, gamma={gamma}, floor={weight_floor}, ceiling={weight_ceiling})...")
     bit_weights = allocate_bits(
         saliency_map,
         object_map=object_map,
         spectral_map=spectral_map,
-        threshold=args.saliency_threshold
+        threshold=saliency_threshold,
+        gamma=gamma,
+        weight_floor=weight_floor,
+        weight_ceiling=weight_ceiling,
     )
 
     # # Save Bit Weight Map (Visual Representation)
@@ -91,8 +158,10 @@ def main():
     final_img, base_img, enhanced_img = layered_compression(
         args.input,
         bit_weights,
-        base_quality=args.base_quality,
-        enhancement_quality=args.enhancement_quality
+        base_quality=base_quality,
+        enhancement_quality=enhancement_quality,
+        downsample_factor=downsample_factor,
+        base_blur_multiplier=base_blur_multiplier,
     )
 
     # # Save Intermediate and Final Results
@@ -108,7 +177,7 @@ def main():
         storage_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage")
     os.makedirs(storage_dir, exist_ok=True)
     final_path = os.path.join(storage_dir, f"{input_filename}_step4_final_compressed.avif")
-    final_img.save(final_path, format="AVIF", quality=args.avif_quality, subsampling='4:2:0')  # Optimized AVIF
+    final_img.save(final_path, format="AVIF", quality=avif_quality, subsampling='4:2:0')  # Optimized AVIF
     print(f"Saved final compressed image to {final_path}")
 
     # Copy original NOW so it's available for comparison as soon as the AVIF is detected
@@ -165,7 +234,7 @@ def main():
     idx += 1
 
     axes[idx].imshow(final_img)
-    axes[idx].set_title(f"Final (Ratio: {ratio:.2f}x)")
+    axes[idx].set_title(f"Final [{args.preset}] (Ratio: {ratio:.2f}x)")
 
     for ax in axes:
         ax.axis('off')

@@ -30,85 +30,115 @@ class SimpleCompressionNet(nn.Module):
 
     def forward(self, x):
         latent = self.encoder(x)
-        # In real compression, we would quantize 'latent' here
-        # For this implementation, we simulate distortion by adding noise or quantizing
         reconstructed = self.decoder(latent)
         return reconstructed
 
 
-def compress_image_pytorch(image_path, quality_factor=0.1, is_base=False):
+def compress_image_pytorch(
+    image_path,
+    quality_factor=0.1,
+    is_base=False,
+    downsample_factor=6,
+    base_blur_multiplier=2.5,
+):
     """
     Simulates deep image compression using a simple autoencoder.
-    quality_factor: simulates bit-depth/noise (higher means better quality)
-    is_base: if True, applies EXTREME compression strategies to background
+
+    quality_factor:       0–1, higher = better quality / less compression artefacts.
+    is_base:              If True, applies aggressive background-suppression strategies.
+    downsample_factor:    For the base layer only.  The image is first scaled down to
+                          1/N of its size and back — destroying high-frequency detail.
+                          Higher N → more destructive → better compression for background.
+                            Storage  : 8   (very aggressive)
+                            Balanced : 6   (current default)
+                            Quality  : 4   (gentle)
+    base_blur_multiplier: Multiplier on the blur sigma for the base layer.
+                          Higher → heavier blur → background is softer and easier to
+                          compress at the AVIF stage.
+                            Storage  : 3.5
+                            Balanced : 2.5
+                            Quality  : 1.5
     """
     img = Image.open(image_path).convert('RGB')
     orig_size = img.size
 
     if is_base:
-        # EXTREME STRATEGY 1: Aggressive Downsampling
-        # Resize to 1/6 of the size, then resize back. This destroys high-frequency data.
-        small_size = (max(16, orig_size[0] // 6), max(16, orig_size[1] // 6))
+        # Strategy 1: Aggressive downsampling — destroys fine texture in background
+        small_size = (
+            max(16, orig_size[0] // downsample_factor),
+            max(16, orig_size[1] // downsample_factor),
+        )
         img = img.resize(small_size, resample=Image.BILINEAR)
         img = img.resize(orig_size, resample=Image.BILINEAR)
 
     orig_np = np.array(img).astype(float) / 255.0
 
-    # 1. Simulate compression artifacts (blur + noise)
+    # Simulate compression artefacts: Gaussian noise scaled by (1 - quality)
     noise_sigma = 0.05 * (1.0 - quality_factor)
     if is_base:
-        noise_sigma *= 2.0  # Even more noise/distortion in background
+        noise_sigma *= 2.0  # Extra noise in background layer
 
     noise = np.random.normal(0, noise_sigma, orig_np.shape)
     compressed_np = np.clip(orig_np + noise, 0, 1)
 
-    # 2. Add blur to simulate high-frequency loss
-    # More blur for background (is_base) = better compression later
+    # Blur to simulate high-frequency loss
     blur_sigma = 1.0 * (1.0 - quality_factor)
     if is_base:
-        # EXTREME STRATEGY 2: Heavy blurring
-        # Optimized: reduced from 4.0 to 2.5 to be less 'totally blurred' but still highly compressible
-        blur_sigma *= 2.5
+        # Strategy 2: Heavy blurring — background becomes smooth and highly compressible
+        blur_sigma *= base_blur_multiplier
 
     if blur_sigma > 0:
-        # Optimization: Use cv2.boxFilter instead of scipy.ndimage.gaussian_filter for speed
         import cv2
-        # Approximate Gaussian blur with box blur kernel size
-        # Kernel size roughly 2*sigma*sqrt(3) or just a reasonable odd integer
-        ksize = int(blur_sigma * 3) | 1  # Ensure odd
+        ksize = int(blur_sigma * 3) | 1  # Ensure odd kernel size
         if ksize > 1:
             compressed_np = cv2.boxFilter(compressed_np, -1, (ksize, ksize))
-
-    if is_base:
-        # STRATEGY 3: Posterization REMOVED to avoid blocky artifacts
-        # Instead, we rely on heavy blur and downsampling, which is more visually pleasing
-        pass
-        # # EXTREME STRATEGY 3: Posterization (Bit-depth reduction)
-        # # Reduce to 4 levels per channel (2 bits) to destroy smooth gradients
-        # compressed_np = np.round(compressed_np * 4) / 4
 
     compressed_img = Image.fromarray((compressed_np * 255).astype(np.uint8))
     return compressed_img
 
 
-def layered_compression(image_path, bit_weights, base_quality=0.2, enhancement_quality=0.9):
+def layered_compression(
+    image_path,
+    bit_weights,
+    base_quality=0.2,
+    enhancement_quality=0.9,
+    downsample_factor=6,
+    base_blur_multiplier=2.5,
+):
     """
     Implements the Base + Enhancement layer logic.
-    - Base layer: Low quality (simulated).
-    - Enhancement layer: High quality (simulated).
+
+    Base layer:        Low quality (aggressive blur + downsample) — for background.
+    Enhancement layer: High quality — selectively blended for salient regions.
+    Final image:       Pixel-wise blend weighted by bit_weights from allocate_bits().
+                       final[px] = (1 - w[px]) * base[px] + w[px] * enhanced[px]
+                       w ≈ 0 → background quality; w ≈ 1 → full enhancement quality.
+
+    downsample_factor / base_blur_multiplier are forwarded to compress_image_pytorch
+    for the base layer only; the enhancement layer always uses the clean image path.
     """
-    # 1. Base Layer (Low quality + aggressive blur)
-    base_img = compress_image_pytorch(image_path, quality_factor=base_quality, is_base=True)
+    # 1. Base Layer — aggressive compression of the full image (background dominates)
+    base_img = compress_image_pytorch(
+        image_path,
+        quality_factor=base_quality,
+        is_base=True,
+        downsample_factor=downsample_factor,
+        base_blur_multiplier=base_blur_multiplier,
+    )
     base_np = np.array(base_img).astype(float) / 255.0
 
-    # 2. Enhancement Layer (High quality)
-    enhanced_img = compress_image_pytorch(image_path, quality_factor=enhancement_quality, is_base=False)
+    # 2. Enhancement Layer — high-fidelity reconstruction
+    enhanced_img = compress_image_pytorch(
+        image_path,
+        quality_factor=enhancement_quality,
+        is_base=False,
+        downsample_factor=downsample_factor,   # unused when is_base=False
+        base_blur_multiplier=base_blur_multiplier,
+    )
     enhanced_np = np.array(enhanced_img).astype(float) / 255.0
 
-    # 3. Blending based on bit weights
+    # 3. Saliency-weighted blend
     weights_3d = np.stack([bit_weights] * 3, axis=-1)
-
-    # Final = (1 - weight) * Base + weight * Enhanced
     final_np = (1.0 - weights_3d) * base_np + weights_3d * enhanced_np
 
     final_img = Image.fromarray((final_np * 255).astype(np.uint8))
