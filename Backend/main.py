@@ -160,6 +160,13 @@ def main():
 
     print("\n--- Pipeline Completed Successfully ---")
 
+    # Clean up the original uploaded file from public/user_photos/
+    try:
+        os.remove(args.input)
+        print(f"Cleaned up input file: {args.input}")
+    except OSError as e:
+        print(f"Warning: could not remove input file {args.input}: {e}")
+
 
 if __name__ == "__main__":
     main()

@@ -161,8 +161,12 @@ function uploadPlugin(): Plugin {
             return;
           }
           const filePath = path.join(storageDir, folder, filename);
+          // Derive the matching compression summary from Backend/output/
+          const summaryFilename = filename.replace(/_step4_final_compressed\.[^.]+$/, '_compression_summary.png');
+          const summaryPath = path.join(process.cwd(), 'Backend', 'output', summaryFilename);
           try {
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+            if (fs.existsSync(summaryPath)) fs.unlinkSync(summaryPath);
             res.end(JSON.stringify({ ok: true }));
           } catch {
             res.statusCode = 500;
