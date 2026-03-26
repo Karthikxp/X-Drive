@@ -1,4 +1,4 @@
-import { Apple, Check, ChevronLeft, ChevronRight, Folder, Image as ImageIcon, Plus, Upload, X } from 'lucide-react';
+import { Apple, Check, ChevronLeft, ChevronRight, Folder, Image as ImageIcon, Plus, Trash2, Upload, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './lib/utils';
@@ -83,6 +83,7 @@ export default function App() {
   const [activeFolder, setActiveFolder] = useState<string>('');
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -121,10 +122,11 @@ export default function App() {
     setCurrentScreen('view');
   };
 
-  const closeImageView = () => setCurrentScreen('home');
+  const closeImageView = () => { setConfirmingDelete(false); setCurrentScreen('home'); };
 
   const goNext = () => {
     if (selectedIndex < images.length - 1) {
+      setConfirmingDelete(false);
       setSlideDirection(1);
       setSelectedIndex((i) => i + 1);
     }
@@ -132,6 +134,7 @@ export default function App() {
 
   const goPrev = () => {
     if (selectedIndex > 0) {
+      setConfirmingDelete(false);
       setSlideDirection(-1);
       setSelectedIndex((i) => i - 1);
     }
@@ -200,6 +203,34 @@ export default function App() {
     }
     setNewFolderName('');
     setCreatingFolder(false);
+  };
+
+  const handleDeleteImage = async () => {
+    if (!selectedImage) return;
+    // URL format: /storage/<folder>/<filename>
+    const parts = selectedImage.url.split('/');
+    const folder = decodeURIComponent(parts[2] ?? '');
+    const filename = parts[3] ?? '';
+    if (!folder || !filename) return;
+
+    try {
+      await fetch(
+        `/api/photos?folder=${encodeURIComponent(folder)}&filename=${encodeURIComponent(filename)}`,
+        { method: 'DELETE' }
+      );
+    } catch (err) {
+      console.error(err);
+    }
+
+    const remaining = images.filter((img) => img.id !== selectedImage.id);
+    setImages(remaining);
+    setConfirmingDelete(false);
+
+    if (remaining.length === 0) {
+      setCurrentScreen('home');
+    } else {
+      setSelectedIndex(Math.min(selectedIndex, remaining.length - 1));
+    }
   };
 
   // Poll /api/photos?folder=X until new compressed images appear, then update the gallery
@@ -471,11 +502,19 @@ export default function App() {
             </svg>
             Drive
           </button>
-          {images.length > 1 && (
-            <span className="text-white/50 text-sm font-medium tabular-nums">
-              {selectedIndex + 1} / {images.length}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {images.length > 1 && (
+              <span className="text-white/50 text-sm font-medium tabular-nums">
+                {selectedIndex + 1} / {images.length}
+              </span>
+            )}
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              className="w-9 h-9 rounded-full bg-white/10 hover:bg-red-500/30 transition-colors flex items-center justify-center"
+            >
+              <Trash2 className="w-4 h-4 text-white/70" />
+            </button>
+          </div>
         </div>
 
         {/* Image area with swipe */}
@@ -543,6 +582,39 @@ export default function App() {
             <p className="text-white/40 text-sm mt-1">{formatSize(selectedImage.size)}</p>
           )}
         </div>
+
+        {/* Delete confirmation overlay */}
+        <AnimatePresence>
+          {confirmingDelete && (
+            <motion.div
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 24 }}
+              transition={{ duration: 0.2 }}
+              className="absolute inset-x-0 bottom-0 z-30 px-6 pb-10 pt-6 bg-gradient-to-t from-black via-black/90 to-transparent"
+            >
+              <p className="text-white text-lg font-semibold mb-1">Delete this photo?</p>
+              <p className="text-white/40 text-sm mb-6">
+                This will permanently remove it from <span className="text-white/60 font-medium">{decodeURIComponent(selectedImage.url.split('/')[2] ?? '')}</span>.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  className="flex-1 py-3.5 rounded-full bg-white/30 text-white font-medium hover:bg-white/20 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteImage}
+                  className="flex-1 py-3.5 rounded-full bg-red-500 text-white font-medium hover:bg-red-600 active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     );
   }

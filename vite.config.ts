@@ -134,7 +134,31 @@ function uploadPlugin(): Plugin {
       });
 
       // GET /api/photos?folder=<name> — list processed images from a storage subfolder
+      // DELETE /api/photos?folder=<name>&filename=<file> — delete a specific image
       server.middlewares.use('/api/photos', (req: any, res: any, next: any) => {
+        res.setHeader('Content-Type', 'application/json');
+
+        if (req.method === 'DELETE') {
+          const qs = ((req.url as string).split('?')[1]) ?? '';
+          const params = new URLSearchParams(qs);
+          const folder = (params.get('folder') ?? '').replace(/[/\\]/g, '');
+          const filename = (params.get('filename') ?? '').replace(/[/\\]/g, '');
+          if (!folder || !filename) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: 'Missing folder or filename' }));
+            return;
+          }
+          const filePath = path.join(storageDir, folder, filename);
+          try {
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+            res.end(JSON.stringify({ ok: true }));
+          } catch {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: 'Failed to delete file' }));
+          }
+          return;
+        }
+
         if (req.method !== 'GET') return next();
         try {
           const qs = ((req.url as string).split('?')[1]) ?? '';
