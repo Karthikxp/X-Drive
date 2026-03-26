@@ -8,4 +8,5 @@ coverage/
 !.env.example
 public/user_photos/
 storage/
+originals/
 output/

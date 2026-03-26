@@ -1,4 +1,4 @@
-import { BarChart2, Check, ChevronLeft, ChevronRight, Folder, Image as ImageIcon, Plus, Trash2, Upload, X } from 'lucide-react';
+import { BarChart2, Check, ChevronLeft, ChevronRight, Columns2, Download, Folder, Image as ImageIcon, Plus, Trash2, Upload, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './lib/utils';
@@ -12,6 +12,9 @@ interface ImageData {
   url: string;
   title: string;
   size?: number;
+  originalSize?: number;
+  ratio?: number;
+  originalUrl?: string;
 }
 
 // --- Components ---
@@ -85,6 +88,11 @@ export default function App() {
   const [newFolderName, setNewFolderName] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [showingSummary, setShowingSummary] = useState(false);
+  const [showingSlider, setShowingSlider] = useState(false);
+  const [sliderPos, setSliderPos] = useState(50);
+  const [isDragging, setIsDragging] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState(0);
+  const sliderContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -112,6 +120,17 @@ export default function App() {
       .catch(() => {});
   }, [activeFolder]);
 
+  // Poll compression queue
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetch('/api/queue')
+        .then((r) => r.json())
+        .then((d: { pending: number }) => setPendingQueue(d.pending))
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(id);
+  }, []);
+
   // --- Handlers ---
   const handleLogin = () => setCurrentScreen('home');
   const handleLogout = () => setCurrentScreen('login');
@@ -123,12 +142,13 @@ export default function App() {
     setCurrentScreen('view');
   };
 
-  const closeImageView = () => { setConfirmingDelete(false); setShowingSummary(false); setCurrentScreen('home'); };
+  const closeImageView = () => { setConfirmingDelete(false); setShowingSummary(false); setShowingSlider(false); setCurrentScreen('home'); };
 
   const goNext = () => {
     if (selectedIndex < images.length - 1) {
       setConfirmingDelete(false);
       setShowingSummary(false);
+      setShowingSlider(false);
       setSlideDirection(1);
       setSelectedIndex((i) => i + 1);
     }
@@ -138,6 +158,7 @@ export default function App() {
     if (selectedIndex > 0) {
       setConfirmingDelete(false);
       setShowingSummary(false);
+      setShowingSlider(false);
       setSlideDirection(-1);
       setSelectedIndex((i) => i - 1);
     }
@@ -513,14 +534,35 @@ export default function App() {
                 {selectedIndex + 1} / {images.length}
               </span>
             )}
+            {/* Download */}
+            <a
+              href={selectedImage.url}
+              download={selectedImage.title + '.avif'}
+              className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center justify-center"
+              title="Download"
+            >
+              <Download className="w-4 h-4 text-white/70" />
+            </a>
+            {/* Compare slider — only when original is available */}
+            {selectedImage.originalUrl && (
+              <button
+                onClick={() => { setShowingSlider(true); setShowingSummary(false); setConfirmingDelete(false); setSliderPos(50); }}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center justify-center"
+                title="Compare original vs compressed"
+              >
+                <Columns2 className="w-4 h-4 text-white/70" />
+              </button>
+            )}
+            {/* Visualize pipeline */}
             <button
-              onClick={() => { setShowingSummary(true); setConfirmingDelete(false); }}
+              onClick={() => { setShowingSummary(true); setShowingSlider(false); setConfirmingDelete(false); }}
               className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-1.5"
               title="Visualize compression"
             >
               <BarChart2 className="w-4 h-4 text-white/70" />
               <span className="text-white/70 text-xs font-medium">Visualize</span>
             </button>
+            {/* Delete */}
             <button
               onClick={() => setConfirmingDelete(true)}
               className="w-9 h-9 rounded-full bg-white/10 hover:bg-red-500/30 transition-colors flex items-center justify-center"
@@ -647,6 +689,100 @@ export default function App() {
           })()}
         </AnimatePresence>
 
+        {/* Split-slider: original vs compressed */}
+        <AnimatePresence>
+          {showingSlider && selectedImage.originalUrl && (
+            <motion.div
+              initial={{ opacity: 0, y: '100%' }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: '100%' }}
+              transition={{ type: 'spring', stiffness: 320, damping: 36 }}
+              className="absolute inset-0 z-40 bg-black flex flex-col"
+            >
+              {/* Top bar */}
+              <div className="flex-shrink-0 flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/10">
+                <div>
+                  <p className="text-white font-semibold text-sm">Compare</p>
+                  <p className="text-white/40 text-xs mt-0.5">Drag to reveal original vs compressed</p>
+                </div>
+                <button
+                  onClick={() => setShowingSlider(false)}
+                  className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center justify-center"
+                >
+                  <X className="w-4 h-4 text-white" />
+                </button>
+              </div>
+
+              {/* Slider area */}
+              <div
+                ref={sliderContainerRef}
+                className="flex-1 relative overflow-hidden select-none"
+                onPointerMove={(e) => {
+                  if (!isDragging || !sliderContainerRef.current) return;
+                  const rect = sliderContainerRef.current.getBoundingClientRect();
+                  setSliderPos(Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)));
+                }}
+                onPointerUp={() => setIsDragging(false)}
+                onPointerLeave={() => setIsDragging(false)}
+              >
+                {/* Compressed image — full background (right side) */}
+                <img
+                  src={selectedImage.url}
+                  alt="Compressed"
+                  className="absolute inset-0 w-full h-full object-contain"
+                  draggable={false}
+                />
+                {/* Original image — clipped to left portion */}
+                <img
+                  src={selectedImage.originalUrl}
+                  alt="Original"
+                  className="absolute inset-0 w-full h-full object-contain"
+                  style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
+                  draggable={false}
+                />
+
+                {/* Divider line + draggable handle */}
+                <div
+                  className="absolute top-0 bottom-0 w-0.5 bg-white/80 shadow-[0_0_10px_rgba(255,255,255,0.6)] cursor-ew-resize z-10"
+                  style={{ left: `${sliderPos}%`, transform: 'translateX(-50%)' }}
+                >
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-11 h-11 rounded-full bg-white shadow-xl flex items-center justify-center gap-0.5 cursor-ew-resize"
+                    onPointerDown={(e) => {
+                      setIsDragging(true);
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                    }}
+                    onPointerMove={(e) => {
+                      if (!isDragging || !sliderContainerRef.current) return;
+                      const rect = sliderContainerRef.current.getBoundingClientRect();
+                      setSliderPos(Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)));
+                    }}
+                    onPointerUp={() => setIsDragging(false)}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 text-black" />
+                    <ChevronRight className="w-3.5 h-3.5 text-black" />
+                  </div>
+                </div>
+
+                {/* Side labels */}
+                {sliderPos > 12 && (
+                  <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-semibold pointer-events-none">
+                    Original
+                  </div>
+                )}
+                {sliderPos < 88 && (
+                  <div className="absolute top-4 right-4 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-semibold pointer-events-none">
+                    Compressed
+                    {selectedImage.ratio && (
+                      <span className="ml-1.5 opacity-70">↓{Math.round((1 - 1 / selectedImage.ratio) * 100)}%</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Delete confirmation overlay */}
         <AnimatePresence>
           {confirmingDelete && (
@@ -738,10 +874,15 @@ export default function App() {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: i * 0.04 }}
-                  className="break-inside-avoid rounded-3xl overflow-hidden cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 shadow-sm"
+                  className="break-inside-avoid rounded-3xl overflow-hidden cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 shadow-sm relative"
                   onClick={() => handleImageClick(img)}
                 >
                   <img src={img.url} alt={img.title} className="w-full h-auto object-cover" loading="lazy" />
+                  {img.ratio != null && (
+                    <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-[10px] font-bold tracking-tight pointer-events-none">
+                      ↓{Math.round((1 - 1 / img.ratio) * 100)}%
+                    </div>
+                  )}
                 </motion.div>
               ))}
             </div>
@@ -755,6 +896,22 @@ export default function App() {
       >
         <Plus className="w-8 h-8" />
       </button>
+
+      {/* Processing queue indicator */}
+      <AnimatePresence>
+        {pendingQueue > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.2 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 bg-black text-white text-sm font-medium rounded-full shadow-lg"
+          >
+            <Spinner className="w-3.5 h-3.5" />
+            {pendingQueue} compressing…
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* New folder modal */}
       <AnimatePresence>

@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 import argparse
 from PIL import Image
 import pillow_avif  # For AVIF support
@@ -24,6 +26,7 @@ def main():
     parser.add_argument("--use_yolo", action="store_true", default=True, help="Use YOLO segmentation to enhance saliency")
     parser.add_argument("--use_spectral", action="store_true", default=True, help="Use Spectral Residual saliency to enhance")
     parser.add_argument("--storage_dir", type=str, default=None, help="Directory to save the final compressed AVIF (overrides default storage/ folder)")
+    parser.add_argument("--originals_dir", type=str, default=None, help="Directory to move the original input file after compression")
 
     args = parser.parse_args()
 
@@ -119,6 +122,12 @@ def main():
     print(f"Compression Ratio: {ratio:.2f}x")
     print("--------------------------\n")
 
+    # Save compression stats as a sidecar JSON next to the compressed file
+    stats = {"originalSize": orig_size, "compressedSize": comp_size, "ratio": round(ratio, 2)}
+    stats_path = os.path.join(storage_dir, f"{input_filename}_stats.json")
+    with open(stats_path, 'w') as f:
+        json.dump(stats, f)
+
     # 7. Visual Summary (Optional)
     print("Generating visual summary...")
     num_plots = 4 + args.use_yolo + args.use_spectral
@@ -160,12 +169,18 @@ def main():
 
     print("\n--- Pipeline Completed Successfully ---")
 
-    # Clean up the original uploaded file from public/user_photos/
+    # Move original to originals_dir (for comparison), or delete it
     try:
-        os.remove(args.input)
-        print(f"Cleaned up input file: {args.input}")
+        if args.originals_dir:
+            os.makedirs(args.originals_dir, exist_ok=True)
+            dest = os.path.join(args.originals_dir, os.path.basename(args.input))
+            shutil.move(args.input, dest)
+            print(f"Moved original to {dest}")
+        else:
+            os.remove(args.input)
+            print(f"Cleaned up input file: {args.input}")
     except OSError as e:
-        print(f"Warning: could not remove input file {args.input}: {e}")
+        print(f"Warning: could not handle input file {args.input}: {e}")
 
 
 if __name__ == "__main__":

@@ -13,12 +13,24 @@ function uploadPlugin(): Plugin {
     configureServer(server) {
       const uploadDir = path.join(process.cwd(), 'public', 'user_photos');
       const storageDir = path.join(process.cwd(), 'storage');
+      const originalsDir = path.join(process.cwd(), 'originals');
       const backendDir = path.join(process.cwd(), 'Backend');
 
       if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
       if (!fs.existsSync(storageDir)) fs.mkdirSync(storageDir, { recursive: true });
+      if (!fs.existsSync(originalsDir)) fs.mkdirSync(originalsDir, { recursive: true });
+
+      // Track in-flight compression jobs for the queue indicator
+      let pendingCompressions = 0;
 
       const upload = multer({ storage: multer.memoryStorage() });
+
+      // GET /api/queue — number of compressions in progress
+      server.middlewares.use('/api/queue', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ pending: pendingCompressions }));
+      });
 
       // GET /api/folders — list subfolders of storage/
       // POST /api/folders — create a new subfolder
@@ -75,18 +87,30 @@ function uploadPlugin(): Plugin {
         }
       });
 
+      // Serve originals/ and its subfolders as static files under /originals/
+      server.middlewares.use('/originals', (req: any, res: any, next: any) => {
+        const filePath = path.join(originalsDir, decodeURIComponent((req.url as string).replace(/^\//, '')));
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeMap: Record<string, string> = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp',
+          };
+          res.setHeader('Content-Type', mimeMap[ext] ?? 'application/octet-stream');
+          fs.createReadStream(filePath).pipe(res);
+        } else {
+          next();
+        }
+      });
+
       // Serve storage/ and its subfolders as static files under /storage/
       server.middlewares.use('/storage', (req: any, res: any, next: any) => {
         const filePath = path.join(storageDir, decodeURIComponent((req.url as string).replace(/^\//, '')));
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
           const ext = path.extname(filePath).toLowerCase();
           const mimeMap: Record<string, string> = {
-            '.avif': 'image/avif',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp',
+            '.avif': 'image/avif', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp',
           };
           res.setHeader('Content-Type', mimeMap[ext] ?? 'application/octet-stream');
           fs.createReadStream(filePath).pipe(res);
@@ -122,18 +146,29 @@ function uploadPlugin(): Plugin {
 
           fs.writeFileSync(filePath, file.buffer);
 
-          // Determine target storage subfolder (default: gallery)
+          // Determine target storage and originals subfolders
           const folder = ((req.body?.folder as string) || 'gallery').replace(/[/\\]/g, '');
           const targetStorageDir = path.join(storageDir, folder);
+          const targetOriginalsDir = path.join(originalsDir, folder);
           fs.mkdirSync(targetStorageDir, { recursive: true });
+          fs.mkdirSync(targetOriginalsDir, { recursive: true });
 
-          // Spawn Python compression pipeline in the background (non-blocking)
+          // Spawn Python compression pipeline (tracked for queue indicator)
           try {
             const proc = spawn(
               'python3',
-              ['main.py', '--input', filePath, '--storage_dir', targetStorageDir],
-              { cwd: backendDir, detached: true, stdio: 'ignore' }
+              [
+                'main.py',
+                '--input', filePath,
+                '--storage_dir', targetStorageDir,
+                '--originals_dir', targetOriginalsDir,
+              ],
+              { cwd: backendDir, stdio: 'ignore' }
             );
+            pendingCompressions++;
+            proc.on('close', () => {
+              pendingCompressions = Math.max(0, pendingCompressions - 1);
+            });
             proc.unref();
             console.log(`[compression] started for ${filename} → ${folder}/ (pid ${proc.pid})`);
           } catch (spawnErr) {
@@ -145,8 +180,8 @@ function uploadPlugin(): Plugin {
         });
       });
 
-      // GET /api/photos?folder=<name> — list processed images from a storage subfolder
-      // DELETE /api/photos?folder=<name>&filename=<file> — delete a specific image
+      // GET /api/photos?folder=<name> — list processed images with stats + original URLs
+      // DELETE /api/photos?folder=<name>&filename=<file> — delete image + sidecar files
       server.middlewares.use('/api/photos', (req: any, res: any, next: any) => {
         res.setHeader('Content-Type', 'application/json');
 
@@ -160,13 +195,24 @@ function uploadPlugin(): Plugin {
             res.end(JSON.stringify({ error: 'Missing folder or filename' }));
             return;
           }
-          const filePath = path.join(storageDir, folder, filename);
-          // Derive the matching compression summary from Backend/output/
-          const summaryFilename = filename.replace(/_step4_final_compressed\.[^.]+$/, '_compression_summary.png');
-          const summaryPath = path.join(process.cwd(), 'Backend', 'output', summaryFilename);
+
+          const stem = filename.replace(/_step4_final_compressed\.[^.]+$/, '');
+          const filesToDelete = [
+            path.join(storageDir, folder, filename),
+            path.join(storageDir, folder, `${stem}_stats.json`),
+            path.join(process.cwd(), 'Backend', 'output', `${stem}_compression_summary.png`),
+          ];
+
+          // Also delete any matching original (unknown extension)
+          const origFolder = path.join(originalsDir, folder);
+          if (fs.existsSync(origFolder)) {
+            fs.readdirSync(origFolder)
+              .filter((f) => f.startsWith(stem))
+              .forEach((f) => filesToDelete.push(path.join(origFolder, f)));
+          }
+
           try {
-            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            if (fs.existsSync(summaryPath)) fs.unlinkSync(summaryPath);
+            filesToDelete.forEach((p) => { if (fs.existsSync(p)) fs.unlinkSync(p); });
             res.end(JSON.stringify({ ok: true }));
           } catch {
             res.statusCode = 500;
@@ -181,9 +227,9 @@ function uploadPlugin(): Plugin {
           const folder = new URLSearchParams(qs).get('folder') ?? 'gallery';
           const safeFolder = folder.replace(/[/\\]/g, '');
           const targetDir = path.join(storageDir, safeFolder);
+          const origFolder = path.join(originalsDir, safeFolder);
 
           if (!fs.existsSync(targetDir)) {
-            res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify([]));
             return;
           }
@@ -199,6 +245,28 @@ function uploadPlugin(): Plugin {
 
           const photos = files.map((f) => {
             const stat = fs.statSync(path.join(targetDir, f));
+            const stem = f.replace(/_step4_final_compressed\.[^.]+$/, '');
+
+            // Read sidecar stats JSON
+            let originalSize: number | undefined;
+            let ratio: number | undefined;
+            const statsPath = path.join(targetDir, `${stem}_stats.json`);
+            if (fs.existsSync(statsPath)) {
+              try {
+                const s = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+                originalSize = s.originalSize;
+                ratio = s.ratio;
+              } catch { /* ignore */ }
+            }
+
+            // Find matching original file
+            let originalUrl: string | undefined;
+            if (fs.existsSync(origFolder)) {
+              const orig = fs.readdirSync(origFolder)
+                .find((o) => o.startsWith(stem) && /\.(jpe?g|png|webp|gif)$/i.test(o));
+              if (orig) originalUrl = `/originals/${encodeURIComponent(safeFolder)}/${orig}`;
+            }
+
             return {
               id: f,
               url: `/storage/${encodeURIComponent(safeFolder)}/${f}`,
@@ -208,14 +276,15 @@ function uploadPlugin(): Plugin {
                 .replace(/\.[^/.]+$/, '')
                 .replace(/_/g, ' '),
               size: stat.size,
+              originalSize,
+              ratio,
+              originalUrl,
             };
           });
 
-          res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(photos));
         } catch {
           res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'Failed to list photos' }));
         }
       });
