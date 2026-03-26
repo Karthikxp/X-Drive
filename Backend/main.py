@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--saliency_threshold", type=float, default=0.15, help="Threshold for saliency enhancement")
     parser.add_argument("--use_yolo", action="store_true", default=True, help="Use YOLO segmentation to enhance saliency")
     parser.add_argument("--use_spectral", action="store_true", default=True, help="Use Spectral Residual saliency to enhance")
+    parser.add_argument("--storage_dir", type=str, default=None, help="Directory to save the final compressed AVIF (overrides default storage/ folder)")
 
     args = parser.parse_args()
 
@@ -98,7 +99,10 @@ def main():
     # enhanced_path = os.path.join(args.output_dir, f"{input_filename}_step3_enhancement_full.png")
     # enhanced_img.save(enhanced_path)
 
-    storage_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage")
+    if args.storage_dir:
+        storage_dir = args.storage_dir
+    else:
+        storage_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage")
     os.makedirs(storage_dir, exist_ok=True)
     final_path = os.path.join(storage_dir, f"{input_filename}_step4_final_compressed.avif")
     final_img.save(final_path, format="AVIF", quality=args.avif_quality, subsampling='4:2:0')  # Optimized AVIF

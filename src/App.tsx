@@ -79,18 +79,36 @@ export default function App() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [activeFolder, setActiveFolder] = useState<string>('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCountRef = useRef(0);
 
   const selectedImage = images[selectedIndex] ?? null;
 
+  // Load folder list once on mount
   useEffect(() => {
-    fetch('/api/photos')
+    fetch('/api/folders')
+      .then((r) => r.json())
+      .then((data: string[]) => {
+        setFolders(data);
+        if (data.length > 0) setActiveFolder(data[0]);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Reload photos whenever the active folder changes
+  useEffect(() => {
+    if (!activeFolder) return;
+    fetch(`/api/photos?folder=${encodeURIComponent(activeFolder)}`)
       .then((r) => r.json())
       .then((data: ImageData[]) => setImages(data))
       .catch(() => {});
-  }, []);
+  }, [activeFolder]);
 
   // --- Handlers ---
   const handleLogin = () => setCurrentScreen('home');
@@ -166,8 +184,26 @@ export default function App() {
     setPreviewUrls((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Poll /api/photos until new compressed images appear, then update the gallery
-  const startPollingForResults = (knownCount: number) => {
+  const handleCreateFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    try {
+      await fetch('/api/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      setFolders((prev) => [...prev, name]);
+      setActiveFolder(name);
+    } catch (err) {
+      console.error(err);
+    }
+    setNewFolderName('');
+    setCreatingFolder(false);
+  };
+
+  // Poll /api/photos?folder=X until new compressed images appear, then update the gallery
+  const startPollingForResults = (knownCount: number, folder: string) => {
     stopPolling();
     pollCountRef.current = 0;
     const MAX_POLLS = 60; // ~5 minutes at 5s intervals
@@ -175,7 +211,7 @@ export default function App() {
     pollTimerRef.current = setInterval(async () => {
       pollCountRef.current += 1;
       try {
-        const r = await fetch('/api/photos');
+        const r = await fetch(`/api/photos?folder=${encodeURIComponent(folder)}`);
         const data: ImageData[] = await r.json();
         if (data.length > knownCount) {
           setImages(data);
@@ -205,6 +241,7 @@ export default function App() {
         const formData = new FormData();
         formData.append('image', file, file.name);
         formData.append('originalName', file.name.replace(/\.[^/.]+$/, ''));
+        formData.append('folder', activeFolder);
 
         const response = await fetch('/api/upload', { method: 'POST', body: formData });
         if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
@@ -212,7 +249,7 @@ export default function App() {
 
       // Switch to processing state and poll until compressed images land in storage
       setUploadStage('processing');
-      startPollingForResults(images.length);
+      startPollingForResults(images.length, activeFolder);
     } catch (err) {
       console.error(err);
       setUploadStage('idle');
@@ -523,11 +560,50 @@ export default function App() {
       <main className="px-6 max-w-3xl mx-auto">
         <section className="mt-6">
           <h2 className="text-4xl font-bold tracking-tight mb-5">Albums</h2>
-          <div className="flex overflow-x-auto pb-4 -mx-6 px-6 gap-3 no-scrollbar">
-            <Pill active>2025 Album</Pill>
-            <Pill>Shares</Pill>
-            <Pill>Downloads</Pill>
-            <Pill>Trip 2025</Pill>
+          <div className="flex overflow-x-auto pb-4 -mx-6 px-6 gap-3 no-scrollbar items-center">
+            {folders.map((f) => (
+              <Pill key={f} active={activeFolder === f} onClick={() => setActiveFolder(f)}>
+                {f}
+              </Pill>
+            ))}
+
+            {creatingFolder ? (
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <input
+                  ref={newFolderInputRef}
+                  autoFocus
+                  type="text"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateFolder();
+                    if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); }
+                  }}
+                  placeholder="Folder name…"
+                  className="px-4 py-2 rounded-full border border-black/30 text-sm font-medium outline-none focus:border-black w-36"
+                />
+                <button
+                  onClick={handleCreateFolder}
+                  className="px-4 py-2 rounded-full bg-black text-white text-sm font-medium whitespace-nowrap"
+                >
+                  Create
+                </button>
+                <button
+                  onClick={() => { setCreatingFolder(false); setNewFolderName(''); }}
+                  className="p-2 rounded-full hover:bg-gray-100"
+                >
+                  <X className="w-4 h-4 text-black/40" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setCreatingFolder(true)}
+                className="flex-shrink-0 px-5 py-2 rounded-full border border-dashed border-black/25 text-sm font-medium text-black/40 hover:bg-gray-50 hover:border-black/40 transition-colors whitespace-nowrap flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New folder
+              </button>
+            )}
           </div>
         </section>
 

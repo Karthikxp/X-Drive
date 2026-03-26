@@ -20,9 +20,52 @@ function uploadPlugin(): Plugin {
 
       const upload = multer({ storage: multer.memoryStorage() });
 
-      // Serve storage/ directory as static files under /storage/
+      // GET /api/folders — list subfolders of storage/
+      // POST /api/folders — create a new subfolder
+      server.middlewares.use('/api/folders', (req: any, res: any, next: any) => {
+        res.setHeader('Content-Type', 'application/json');
+
+        if (req.method === 'GET') {
+          try {
+            const folders = fs
+              .readdirSync(storageDir)
+              .filter((f) => fs.statSync(path.join(storageDir, f)).isDirectory());
+            res.end(JSON.stringify(folders));
+          } catch {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: 'Failed to list folders' }));
+          }
+          return;
+        }
+
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => (body += chunk.toString()));
+          req.on('end', () => {
+            try {
+              const { name } = JSON.parse(body) as { name: string };
+              const safe = name.trim().replace(/[/\\]/g, '');
+              if (!safe) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'Invalid folder name' }));
+                return;
+              }
+              fs.mkdirSync(path.join(storageDir, safe), { recursive: true });
+              res.end(JSON.stringify({ name: safe }));
+            } catch {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Invalid request body' }));
+            }
+          });
+          return;
+        }
+
+        next();
+      });
+
+      // Serve storage/ and its subfolders as static files under /storage/
       server.middlewares.use('/storage', (req: any, res: any, next: any) => {
-        const filePath = path.join(storageDir, (req.url as string).replace(/^\//, ''));
+        const filePath = path.join(storageDir, decodeURIComponent((req.url as string).replace(/^\//, '')));
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
           const ext = path.extname(filePath).toLowerCase();
           const mimeMap: Record<string, string> = {
@@ -67,15 +110,20 @@ function uploadPlugin(): Plugin {
 
           fs.writeFileSync(filePath, file.buffer);
 
+          // Determine target storage subfolder (default: gallery)
+          const folder = ((req.body?.folder as string) || 'gallery').replace(/[/\\]/g, '');
+          const targetStorageDir = path.join(storageDir, folder);
+          fs.mkdirSync(targetStorageDir, { recursive: true });
+
           // Spawn Python compression pipeline in the background (non-blocking)
           try {
-            const proc = spawn('python3', ['main.py', '--input', filePath], {
-              cwd: backendDir,
-              detached: true,
-              stdio: 'ignore',
-            });
+            const proc = spawn(
+              'python3',
+              ['main.py', '--input', filePath, '--storage_dir', targetStorageDir],
+              { cwd: backendDir, detached: true, stdio: 'ignore' }
+            );
             proc.unref();
-            console.log(`[compression] started for ${filename} (pid ${proc.pid})`);
+            console.log(`[compression] started for ${filename} → ${folder}/ (pid ${proc.pid})`);
           } catch (spawnErr) {
             console.error('[compression] failed to spawn process:', spawnErr);
           }
@@ -85,25 +133,35 @@ function uploadPlugin(): Plugin {
         });
       });
 
-      // GET /api/photos — list processed images from storage/
+      // GET /api/photos?folder=<name> — list processed images from a storage subfolder
       server.middlewares.use('/api/photos', (req: any, res: any, next: any) => {
         if (req.method !== 'GET') return next();
         try {
+          const qs = ((req.url as string).split('?')[1]) ?? '';
+          const folder = new URLSearchParams(qs).get('folder') ?? 'gallery';
+          const safeFolder = folder.replace(/[/\\]/g, '');
+          const targetDir = path.join(storageDir, safeFolder);
+
+          if (!fs.existsSync(targetDir)) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify([]));
+            return;
+          }
+
           const files = fs
-            .readdirSync(storageDir)
+            .readdirSync(targetDir)
             .filter((f) => /\.(jpe?g|png|gif|webp|avif)$/i.test(f))
             .sort((a, b) => {
-              // Sort by mtime descending (newest first)
-              const at = fs.statSync(path.join(storageDir, a)).mtimeMs;
-              const bt = fs.statSync(path.join(storageDir, b)).mtimeMs;
+              const at = fs.statSync(path.join(targetDir, a)).mtimeMs;
+              const bt = fs.statSync(path.join(targetDir, b)).mtimeMs;
               return bt - at;
             });
 
           const photos = files.map((f) => {
-            const stat = fs.statSync(path.join(storageDir, f));
+            const stat = fs.statSync(path.join(targetDir, f));
             return {
               id: f,
-              url: `/storage/${f}`,
+              url: `/storage/${encodeURIComponent(safeFolder)}/${f}`,
               title: f
                 .replace(/^\d+-/, '')
                 .replace(/_step4_final_compressed/, '')
