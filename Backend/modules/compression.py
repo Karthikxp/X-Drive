@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 
 
@@ -59,7 +59,7 @@ def compress_image_pytorch(
                             Balanced : 2.5
                             Quality  : 1.5
     """
-    img = Image.open(image_path).convert('RGB')
+    img = ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
     orig_size = img.size
 
     if is_base:

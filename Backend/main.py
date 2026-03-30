@@ -2,7 +2,7 @@ import json
 import os
 import shutil
 import argparse
-from PIL import Image
+from PIL import Image, ImageOps
 import pillow_avif  # For AVIF support
 import numpy as np
 import matplotlib.pyplot as plt
@@ -208,7 +208,7 @@ def main():
     print("Generating visual summary...")
     num_plots = 4 + args.use_yolo + args.use_spectral
     fig, axes = plt.subplots(1, num_plots, figsize=(5 * num_plots, 5))
-    orig_img = Image.open(args.input)
+    orig_img = ImageOps.exif_transpose(Image.open(args.input))
 
     idx = 0
     axes[idx].imshow(orig_img)

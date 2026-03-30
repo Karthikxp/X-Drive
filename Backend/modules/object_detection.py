@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def get_object_segmentation_map(image_path, model_name="yolov8n-seg.pt"):
@@ -15,8 +15,8 @@ def get_object_segmentation_map(image_path, model_name="yolov8n-seg.pt"):
     # Run inference on CPU to avoid CUDA/torchvision version mismatch issues with NMS
     results = model(image_path, verbose=False, device='cpu')
 
-    # Get original image size
-    img = Image.open(image_path)
+    # Get original image size (with EXIF orientation applied)
+    img = ImageOps.exif_transpose(Image.open(image_path))
     w, h = img.size
 
     # Initialize an empty mask

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import os
 import ssl
@@ -293,7 +293,7 @@ def get_saliency_map(image_path, weight_path):
     net.to(device)
     net.eval()
 
-    img = Image.open(image_path).convert('RGB')
+    img = ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
     orig_size = img.size
     transform = transforms.Compose([
         transforms.Resize((320, 320)),

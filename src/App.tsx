@@ -74,7 +74,9 @@ const formatSize = (bytes: number) => {
 // --- Main App ---
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState<Screen>('login');
+  const [currentScreen, setCurrentScreen] = useState<Screen>(() =>
+    localStorage.getItem('xdrive_logged_in') ? 'home' : 'login'
+  );
   const [images, setImages] = useState<ImageData[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [slideDirection, setSlideDirection] = useState<number>(0);
@@ -83,7 +85,9 @@ export default function App() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [folders, setFolders] = useState<string[]>([]);
-  const [activeFolder, setActiveFolder] = useState<string>('');
+  const [activeFolder, setActiveFolder] = useState<string>(
+    () => localStorage.getItem('xdrive_active_folder') ?? ''
+  );
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -107,10 +111,20 @@ export default function App() {
       .then((r) => r.json())
       .then((data: string[]) => {
         setFolders(data);
-        if (data.length > 0) setActiveFolder(data[0]);
+        const saved = localStorage.getItem('xdrive_active_folder');
+        if (saved && data.includes(saved)) {
+          setActiveFolder(saved);
+        } else if (data.length > 0) {
+          setActiveFolder(data[0]);
+        }
       })
       .catch(() => {});
   }, []);
+
+  // Persist active folder across refreshes
+  useEffect(() => {
+    if (activeFolder) localStorage.setItem('xdrive_active_folder', activeFolder);
+  }, [activeFolder]);
 
   // Reload photos whenever the active folder changes
   useEffect(() => {
@@ -133,8 +147,8 @@ export default function App() {
   }, []);
 
   // --- Handlers ---
-  const handleLogin = () => setCurrentScreen('home');
-  const handleLogout = () => setCurrentScreen('login');
+  const handleLogin = () => { localStorage.setItem('xdrive_logged_in', '1'); setCurrentScreen('home'); };
+  const handleLogout = () => { localStorage.removeItem('xdrive_logged_in'); localStorage.removeItem('xdrive_active_folder'); setCurrentScreen('login'); };
 
   const handleImageClick = (img: ImageData) => {
     const idx = images.findIndex((i) => i.id === img.id);
