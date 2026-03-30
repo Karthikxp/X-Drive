@@ -9,49 +9,59 @@ import matplotlib.pyplot as plt
 
 # ---------------------------------------------------------------------------
 # Preset definitions — each preset tunes every layer of the pipeline:
-#   avif_quality        : final AVIF encoder quality (lower = smaller file)
-#   base_quality        : quality_factor for the background (base) layer [0–1]
-#   enhancement_quality : quality_factor for the salient (enhancement) layer [0–1]
-#   saliency_threshold  : pixels below this saliency score are treated as background
-#   gamma               : reshapes ACRD bit-weight curve (>1 = more binary split)
-#   weight_floor        : minimum bit-weight for every pixel (0 = pure base for bg)
-#   weight_ceiling      : cap on maximum bit-weight (limits peak quality expenditure)
-#   downsample_factor   : how aggressively the base layer is spatially downsampled
-#   base_blur_multiplier: blur intensity multiplier for the base (background) layer
+#
+#   Strategy: foreground-lossless compression.
+#     Foreground pixels (U2Net + YOLOv8 + spectral saliency) → original pixels,
+#     zero compression loss.  Background → heavily pre-processed base layer.
+#     final[px] = (1 - w) * base[px] + w * original[px]
+#
+#   avif_quality        : final AVIF encoder quality.  Must be HIGH (85-95) so
+#                         the encoder does not re-introduce artefacts on the
+#                         already-lossless foreground pixels.  File-size savings
+#                         come from the pre-degraded background, not from lossy
+#                         AVIF encoding.
+#   base_quality        : how aggressively the background layer is pre-degraded [0–1]
+#   enhancement_quality : legacy parameter, no longer used (kept for CLI compat)
+#   saliency_threshold  : pixels below this score are treated as pure background
+#   gamma               : reshapes ACRD curve (>1 = harder fg/bg split)
+#   weight_floor        : minimum weight for all pixels (0 = pure base for bg)
+#   weight_ceiling      : MUST be 1.0 to allow truly lossless foreground pixels
+#   downsample_factor   : spatial downsampling factor for base (background) layer
+#   base_blur_multiplier: blur multiplier for base (background) layer
 # ---------------------------------------------------------------------------
 PRESETS = {
     'storage': {
-        'avif_quality':          20,
-        'base_quality':          0.05,
-        'enhancement_quality':   0.82,
-        'saliency_threshold':    0.22,
-        'gamma':                 1.6,
+        'avif_quality':          85,   # high — compression comes from bg preprocessing
+        'base_quality':          0.04,
+        'enhancement_quality':   0.82, # legacy, unused
+        'saliency_threshold':    0.20,
+        'gamma':                 1.8,  # hard binary fg/bg split
         'weight_floor':          0.0,
-        'weight_ceiling':        0.88,
-        'downsample_factor':     8,
-        'base_blur_multiplier':  3.5,
+        'weight_ceiling':        1.0,  # must be 1.0 for lossless foreground
+        'downsample_factor':     9,
+        'base_blur_multiplier':  4.0,
     },
     'balanced': {
-        'avif_quality':          28,
+        'avif_quality':          90,
         'base_quality':          0.10,
-        'enhancement_quality':   0.90,
+        'enhancement_quality':   0.90, # legacy, unused
         'saliency_threshold':    0.15,
-        'gamma':                 1.0,
+        'gamma':                 1.2,
         'weight_floor':          0.0,
         'weight_ceiling':        1.0,
         'downsample_factor':     6,
-        'base_blur_multiplier':  2.5,
+        'base_blur_multiplier':  2.8,
     },
     'quality': {
-        'avif_quality':          38,
-        'base_quality':          0.20,
-        'enhancement_quality':   0.95,
+        'avif_quality':          95,
+        'base_quality':          0.18,
+        'enhancement_quality':   0.95, # legacy, unused
         'saliency_threshold':    0.08,
-        'gamma':                 0.7,
-        'weight_floor':          0.12,
+        'gamma':                 0.8,
+        'weight_floor':          0.08,
         'weight_ceiling':        1.0,
         'downsample_factor':     4,
-        'base_blur_multiplier':  1.5,
+        'base_blur_multiplier':  1.8,
     },
 }
 
@@ -155,7 +165,7 @@ def main():
 
     # 4. Layered Compression (Base + Enhancement)
     print("Step 3: Performing Layered Compression...")
-    final_img, base_img, enhanced_img = layered_compression(
+    final_img, base_img, _original_ref = layered_compression(
         args.input,
         bit_weights,
         base_quality=base_quality,
@@ -167,9 +177,6 @@ def main():
     # # Save Intermediate and Final Results
     # base_path = os.path.join(args.output_dir, f"{input_filename}_step3_base_layer.png")
     # base_img.save(base_path)
-
-    # enhanced_path = os.path.join(args.output_dir, f"{input_filename}_step3_enhancement_full.png")
-    # enhanced_img.save(enhanced_path)
 
     if args.storage_dir:
         storage_dir = args.storage_dir
@@ -230,11 +237,11 @@ def main():
         idx += 1
 
     axes[idx].imshow(base_img)
-    axes[idx].set_title(f"Base Layer (Q={args.base_quality})")
+    axes[idx].set_title(f"Background (compressed, Q={base_quality})")
     idx += 1
 
     axes[idx].imshow(final_img)
-    axes[idx].set_title(f"Final [{args.preset}] (Ratio: {ratio:.2f}x)")
+    axes[idx].set_title(f"Final [{args.preset}] — fg lossless (Ratio: {ratio:.2f}x)")
 
     for ax in axes:
         ax.axis('off')

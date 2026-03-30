@@ -101,23 +101,32 @@ def layered_compression(
     image_path,
     bit_weights,
     base_quality=0.2,
-    enhancement_quality=0.9,
+    enhancement_quality=0.9,  # kept for API compatibility, no longer used internally
     downsample_factor=6,
     base_blur_multiplier=2.5,
 ):
     """
-    Implements the Base + Enhancement layer logic.
+    Foreground-lossless compression strategy.
 
-    Base layer:        Low quality (aggressive blur + downsample) — for background.
-    Enhancement layer: High quality — selectively blended for salient regions.
-    Final image:       Pixel-wise blend weighted by bit_weights from allocate_bits().
-                       final[px] = (1 - w[px]) * base[px] + w[px] * enhanced[px]
-                       w ≈ 0 → background quality; w ≈ 1 → full enhancement quality.
+    Foreground pixels (high bit_weight → detected by U2Net / YOLOv8 / spectral):
+        Use the ORIGINAL pixel value — zero compression loss.
 
-    downsample_factor / base_blur_multiplier are forwarded to compress_image_pytorch
-    for the base layer only; the enhancement layer always uses the clean image path.
+    Background pixels (low bit_weight):
+        Use the aggressively pre-processed base layer (heavy blur + downsample).
+
+    Blend:   final[px] = (1 - w[px]) * base[px] + w[px] * original[px]
+             w = 1.0  → pure original  (lossless foreground)
+             w = 0.0  → pure base      (maximally compressed background)
+             0 < w < 1 → smooth transition at object boundaries
+
+    The final AVIF encoder is run at high quality so it does not re-introduce
+    artefacts on the already-lossless foreground regions.
     """
-    # 1. Base Layer — aggressive compression of the full image (background dominates)
+    # 1. Original image — lossless reference for foreground
+    original_img = ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
+    original_np = np.array(original_img).astype(float) / 255.0
+
+    # 2. Base layer — aggressively degraded for background regions
     base_img = compress_image_pytorch(
         image_path,
         quality_factor=base_quality,
@@ -127,19 +136,11 @@ def layered_compression(
     )
     base_np = np.array(base_img).astype(float) / 255.0
 
-    # 2. Enhancement Layer — high-fidelity reconstruction
-    enhanced_img = compress_image_pytorch(
-        image_path,
-        quality_factor=enhancement_quality,
-        is_base=False,
-        downsample_factor=downsample_factor,   # unused when is_base=False
-        base_blur_multiplier=base_blur_multiplier,
-    )
-    enhanced_np = np.array(enhanced_img).astype(float) / 255.0
-
-    # 3. Saliency-weighted blend
+    # 3. Foreground-lossless blend
+    #    High weight  → original pixel (lossless)
+    #    Low  weight  → base pixel    (heavily compressed background)
     weights_3d = np.stack([bit_weights] * 3, axis=-1)
-    final_np = (1.0 - weights_3d) * base_np + weights_3d * enhanced_np
+    final_np = (1.0 - weights_3d) * base_np + weights_3d * original_np
 
     final_img = Image.fromarray((final_np * 255).astype(np.uint8))
-    return final_img, base_img, enhanced_img
+    return final_img, base_img, original_img

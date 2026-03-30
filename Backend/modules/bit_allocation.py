@@ -60,7 +60,11 @@ def allocate_bits(
                 (combined_map.shape[1], combined_map.shape[0]), resample=Image.BILINEAR
             )
             spectral_map = np.array(spec_img)
-        combined_map = np.maximum(combined_map, spectral_map)
+        # Boost spectral map by 1.45× before fusion so it punches through more
+        # strongly and triggers foreground-lossless treatment for high-frequency
+        # regions the semantic detectors might miss (fine texture, sharp edges).
+        spectral_boosted = np.clip(spectral_map * 1.45, 0.0, 1.0)
+        combined_map = np.maximum(combined_map, spectral_boosted)
 
     # 2. Hard threshold — pixels below this become exactly 0
     combined_map_thresholded = np.where(combined_map < threshold, 0.0, combined_map)
