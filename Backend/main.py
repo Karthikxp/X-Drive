@@ -8,60 +8,75 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ---------------------------------------------------------------------------
-# Preset definitions — each preset tunes every layer of the pipeline:
+# Preset definitions
 #
-#   Strategy: foreground-lossless compression.
-#     Foreground pixels (U2Net + YOLOv8 + spectral saliency) → original pixels,
-#     zero compression loss.  Background → heavily pre-processed base layer.
-#     final[px] = (1 - w) * base[px] + w * original[px]
+#   storage / balanced / quality  — classic lossy pipeline
+#       final[px] = (1-w)*base[px] + w*enhanced[px]
+#       Both base and enhanced layers are lossy; foreground gets higher quality
+#       but is still compressed.  Smaller files, faster encoding.
 #
-#   avif_quality        : final AVIF encoder quality.  Must be HIGH (85-95) so
-#                         the encoder does not re-introduce artefacts on the
-#                         already-lossless foreground pixels.  File-size savings
-#                         come from the pre-degraded background, not from lossy
-#                         AVIF encoding.
-#   base_quality        : how aggressively the background layer is pre-degraded [0–1]
-#   enhancement_quality : legacy parameter, no longer used (kept for CLI compat)
-#   saliency_threshold  : pixels below this score are treated as pure background
-#   gamma               : reshapes ACRD curve (>1 = harder fg/bg split)
-#   weight_floor        : minimum weight for all pixels (0 = pure base for bg)
-#   weight_ceiling      : MUST be 1.0 to allow truly lossless foreground pixels
-#   downsample_factor   : spatial downsampling factor for base (background) layer
-#   base_blur_multiplier: blur multiplier for base (background) layer
+#   lossless  — foreground-lossless pipeline
+#       final[px] = (1-w)*base[px] + w*original[px]
+#       Detected foreground (U2Net + YOLOv8 + spectral) → exact original pixels.
+#       Background → aggressively compressed base layer.
+#       AVIF quality must be high so the encoder doesn't re-degrade the preserved
+#       foreground pixels; compression savings come from the pre-processed background.
+#
+#   lossless_foreground : True  → use foreground-lossless blend
+#   spectral_boost      : >1.0  → amplify spectral map before fusion (lossless only)
 # ---------------------------------------------------------------------------
 PRESETS = {
     'storage': {
-        'avif_quality':          85,   # high — compression comes from bg preprocessing
-        'base_quality':          0.04,
-        'enhancement_quality':   0.82, # legacy, unused
-        'saliency_threshold':    0.20,
-        'gamma':                 1.8,  # hard binary fg/bg split
+        'avif_quality':          20,
+        'base_quality':          0.05,
+        'enhancement_quality':   0.82,
+        'saliency_threshold':    0.22,
+        'gamma':                 1.6,
         'weight_floor':          0.0,
-        'weight_ceiling':        1.0,  # must be 1.0 for lossless foreground
-        'downsample_factor':     9,
-        'base_blur_multiplier':  4.0,
+        'weight_ceiling':        0.88,
+        'downsample_factor':     8,
+        'base_blur_multiplier':  3.5,
+        'lossless_foreground':   False,
+        'spectral_boost':        1.0,
     },
     'balanced': {
-        'avif_quality':          90,
+        'avif_quality':          28,
         'base_quality':          0.10,
-        'enhancement_quality':   0.90, # legacy, unused
+        'enhancement_quality':   0.90,
         'saliency_threshold':    0.15,
-        'gamma':                 1.2,
+        'gamma':                 1.0,
         'weight_floor':          0.0,
         'weight_ceiling':        1.0,
         'downsample_factor':     6,
-        'base_blur_multiplier':  2.8,
+        'base_blur_multiplier':  2.5,
+        'lossless_foreground':   False,
+        'spectral_boost':        1.0,
     },
     'quality': {
-        'avif_quality':          95,
-        'base_quality':          0.18,
-        'enhancement_quality':   0.95, # legacy, unused
+        'avif_quality':          38,
+        'base_quality':          0.20,
+        'enhancement_quality':   0.95,
         'saliency_threshold':    0.08,
-        'gamma':                 0.8,
-        'weight_floor':          0.08,
+        'gamma':                 0.7,
+        'weight_floor':          0.12,
         'weight_ceiling':        1.0,
         'downsample_factor':     4,
-        'base_blur_multiplier':  1.8,
+        'base_blur_multiplier':  1.5,
+        'lossless_foreground':   False,
+        'spectral_boost':        1.0,
+    },
+    'lossless': {
+        'avif_quality':          90,   # high — AVIF must not re-degrade preserved fg pixels
+        'base_quality':          0.04,
+        'enhancement_quality':   0.90, # unused in lossless mode
+        'saliency_threshold':    0.18,
+        'gamma':                 1.5,  # sharper fg/bg split
+        'weight_floor':          0.0,
+        'weight_ceiling':        1.0,  # allow w=1.0 for exact original pixels
+        'downsample_factor':     8,
+        'base_blur_multiplier':  3.8,
+        'lossless_foreground':   True,
+        'spectral_boost':        1.45, # spectral punches through harder for fine edges
     },
 }
 
@@ -85,24 +100,27 @@ def main():
     parser.add_argument("--use_spectral", action="store_true", default=True, help="Use Spectral Residual saliency to enhance")
     parser.add_argument("--storage_dir", type=str, default=None, help="Directory to save the final compressed AVIF (overrides default storage/ folder)")
     parser.add_argument("--originals_dir", type=str, default=None, help="Directory to move the original input file after compression")
-    parser.add_argument("--preset", type=str, default="balanced", choices=["storage", "balanced", "quality"],
-                        help="Compression preset: storage (max compression), balanced (default), quality (best fidelity)")
+    parser.add_argument("--preset", type=str, default="balanced", choices=["storage", "balanced", "quality", "lossless"],
+                        help="Compression preset: storage (max compression), balanced (default), quality (best fidelity), lossless (fg lossless)")
 
     args = parser.parse_args()
 
     # Resolve preset — individual flags override preset values if explicitly passed
     p = PRESETS[args.preset]
-    avif_quality        = p['avif_quality']
-    base_quality        = p['base_quality']
-    enhancement_quality = p['enhancement_quality']
-    saliency_threshold  = p['saliency_threshold']
-    gamma               = p['gamma']
-    weight_floor        = p['weight_floor']
-    weight_ceiling      = p['weight_ceiling']
-    downsample_factor   = p['downsample_factor']
+    avif_quality         = p['avif_quality']
+    base_quality         = p['base_quality']
+    enhancement_quality  = p['enhancement_quality']
+    saliency_threshold   = p['saliency_threshold']
+    gamma                = p['gamma']
+    weight_floor         = p['weight_floor']
+    weight_ceiling       = p['weight_ceiling']
+    downsample_factor    = p['downsample_factor']
     base_blur_multiplier = p['base_blur_multiplier']
+    lossless_foreground  = p['lossless_foreground']
+    spectral_boost       = p['spectral_boost']
 
-    print(f"[preset={args.preset}] avif_quality={avif_quality}, saliency_threshold={saliency_threshold}, gamma={gamma}, weight_floor={weight_floor}, ceiling={weight_ceiling}, downsample={downsample_factor}x, blur_mult={base_blur_multiplier}")
+    mode_label = "FOREGROUND-LOSSLESS" if lossless_foreground else "classic lossy"
+    print(f"[preset={args.preset} | {mode_label}] avif_q={avif_quality}, threshold={saliency_threshold}, gamma={gamma}, floor={weight_floor}, ceiling={weight_ceiling}, downsample={downsample_factor}x, blur={base_blur_multiplier}, spectral_boost={spectral_boost}")
 
     # 1. Create output directory and get input filename prefix
     os.makedirs(args.output_dir, exist_ok=True)
@@ -155,6 +173,7 @@ def main():
         gamma=gamma,
         weight_floor=weight_floor,
         weight_ceiling=weight_ceiling,
+        spectral_boost=spectral_boost,
     )
 
     # # Save Bit Weight Map (Visual Representation)
@@ -165,13 +184,14 @@ def main():
 
     # 4. Layered Compression (Base + Enhancement)
     print("Step 3: Performing Layered Compression...")
-    final_img, base_img, _original_ref = layered_compression(
+    final_img, base_img, _third_layer = layered_compression(
         args.input,
         bit_weights,
         base_quality=base_quality,
         enhancement_quality=enhancement_quality,
         downsample_factor=downsample_factor,
         base_blur_multiplier=base_blur_multiplier,
+        lossless_foreground=lossless_foreground,
     )
 
     # # Save Intermediate and Final Results
@@ -237,11 +257,12 @@ def main():
         idx += 1
 
     axes[idx].imshow(base_img)
-    axes[idx].set_title(f"Background (compressed, Q={base_quality})")
+    axes[idx].set_title(f"Base Layer (bg-compressed, Q={base_quality})")
     idx += 1
 
+    fg_note = "fg-lossless" if lossless_foreground else "lossy blend"
     axes[idx].imshow(final_img)
-    axes[idx].set_title(f"Final [{args.preset}] — fg lossless (Ratio: {ratio:.2f}x)")
+    axes[idx].set_title(f"Final [{args.preset}] {fg_note} ({ratio:.2f}×)")
 
     for ax in axes:
         ax.axis('off')

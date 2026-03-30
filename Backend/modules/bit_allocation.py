@@ -20,6 +20,7 @@ def allocate_bits(
     gamma=1.0,
     weight_floor=0.0,
     weight_ceiling=1.0,
+    spectral_boost=1.0,
 ):
     """
     Allocates bit weights based on the combined saliency, object, and spectral maps
@@ -60,10 +61,10 @@ def allocate_bits(
                 (combined_map.shape[1], combined_map.shape[0]), resample=Image.BILINEAR
             )
             spectral_map = np.array(spec_img)
-        # Boost spectral map by 1.45× before fusion so it punches through more
-        # strongly and triggers foreground-lossless treatment for high-frequency
-        # regions the semantic detectors might miss (fine texture, sharp edges).
-        spectral_boosted = np.clip(spectral_map * 1.45, 0.0, 1.0)
+        # Apply per-preset spectral boost before max fusion.
+        # spectral_boost > 1 makes spectral residual punch through more strongly,
+        # useful for the lossless preset to protect fine edges and texture.
+        spectral_boosted = np.clip(spectral_map * spectral_boost, 0.0, 1.0)
         combined_map = np.maximum(combined_map, spectral_boosted)
 
     # 2. Hard threshold — pixels below this become exactly 0

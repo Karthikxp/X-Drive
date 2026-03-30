@@ -84,7 +84,7 @@ export default function App() {
   const [sliderPos, setSliderPos] = useState(50);
   const isDraggingRef = useRef(false);
   const [pendingQueue, setPendingQueue] = useState(0);
-  const [preset, setPreset] = useState<'storage' | 'balanced' | 'quality'>('balanced');
+  const [preset, setPreset] = useState<'storage' | 'balanced' | 'quality' | 'lossless'>('balanced');
   const [compressionDone, setCompressionDone] = useState(0);
   const uploadTotalRef = useRef(0);
   const sliderContainerRef = useRef<HTMLDivElement>(null);
@@ -519,12 +519,13 @@ export default function App() {
           {/* Preset selector */}
           <div className="mt-6">
             <p className="text-white/40 text-[11px] font-semibold uppercase tracking-widest mb-3">Compression preset</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {([
-                { id: 'storage',  label: 'Storage',  sub: 'Max compression',     ratio: '8–15×' },
-                { id: 'balanced', label: 'Balanced', sub: 'Smart trade-off',      ratio: '4–8×'  },
-                { id: 'quality',  label: 'Quality',  sub: 'Best visual fidelity', ratio: '2–4×'  },
-              ] as const).map(({ id, label, sub, ratio }) => (
+                { id: 'storage',  label: 'Storage',  sub: 'Max compression',      ratio: '8–15×',  dot: 'bg-orange-400' },
+                { id: 'balanced', label: 'Balanced', sub: 'Smart trade-off',       ratio: '4–8×',   dot: 'bg-blue-400'   },
+                { id: 'quality',  label: 'Quality',  sub: 'Best visual fidelity',  ratio: '2–4×',   dot: 'bg-emerald-400'},
+                { id: 'lossless', label: 'Lossless', sub: 'Fg pixel-perfect',      ratio: '3–8×',   dot: 'bg-violet-400' },
+              ] as const).map(({ id, label, sub, ratio, dot }) => (
                 <motion.button
                   key={id}
                   onClick={() => setPreset(id)}
@@ -537,8 +538,11 @@ export default function App() {
                       : 'bg-white/7 text-white/55 hover:bg-white/11 border border-white/8'
                   )}
                 >
-                  <p className={cn('text-sm font-bold', preset === id ? 'text-black' : 'text-white')}>{label}</p>
-                  <p className={cn('text-[10px] mt-0.5 leading-tight', preset === id ? 'text-black/50' : 'text-white/32')}>{sub}</p>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className={cn('w-2 h-2 rounded-full flex-shrink-0', dot, preset === id ? 'opacity-100' : 'opacity-60')} />
+                    <p className={cn('text-sm font-bold', preset === id ? 'text-black' : 'text-white')}>{label}</p>
+                  </div>
+                  <p className={cn('text-[10px] leading-tight', preset === id ? 'text-black/50' : 'text-white/32')}>{sub}</p>
                   <p className={cn('text-xs font-semibold mt-1.5', preset === id ? 'text-black/65' : 'text-white/38')}>{ratio}</p>
                 </motion.button>
               ))}

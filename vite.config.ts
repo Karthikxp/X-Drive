@@ -148,7 +148,7 @@ function uploadPlugin(): Plugin {
 
           // Determine target storage and originals subfolders
           const folder = ((req.body?.folder as string) || 'gallery').replace(/[/\\]/g, '');
-          const preset = ['storage', 'balanced', 'quality'].includes(req.body?.preset as string)
+          const preset = ['storage', 'balanced', 'quality', 'lossless'].includes(req.body?.preset as string)
             ? (req.body.preset as string)
             : 'balanced';
           const targetStorageDir = path.join(storageDir, folder);
