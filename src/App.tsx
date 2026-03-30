@@ -85,6 +85,8 @@ export default function App() {
   const isDraggingRef = useRef(false);
   const [pendingQueue, setPendingQueue] = useState(0);
   const [preset, setPreset] = useState<'storage' | 'balanced' | 'quality'>('balanced');
+  const [compressionDone, setCompressionDone] = useState(0);
+  const uploadTotalRef = useRef(0);
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
@@ -179,6 +181,7 @@ export default function App() {
     stopPolling();
     previewUrls.forEach((u) => URL.revokeObjectURL(u));
     setPendingFiles([]); setPreviewUrls([]); setUploadedCount(0);
+    setCompressionDone(0); uploadTotalRef.current = 0;
     setUploadStage('idle'); setCurrentScreen('home');
   };
 
@@ -225,26 +228,50 @@ export default function App() {
     else { setSelectedIndex(Math.min(selectedIndex, remaining.length - 1)); }
   };
 
-  const startPollingForResults = (knownCount: number, folder: string) => {
+  const startPollingForResults = (knownCount: number, folder: string, expectedCount: number) => {
     stopPolling();
     pollCountRef.current = 0;
-    const MAX_POLLS = 60;
+    const MAX_POLLS = 120; // 10 min at 5s intervals
     pollTimerRef.current = setInterval(async () => {
       pollCountRef.current += 1;
       try {
         const r = await fetch(`/api/photos?folder=${encodeURIComponent(folder)}`);
         const data: ImageData[] = await r.json();
-        if (data.length > knownCount) { setImages(data); stopPolling(); setUploadStage('done'); setTimeout(clearUpload, 1500); }
-      } catch { /* ignore */ }
+        const newlyDone = Math.max(0, data.length - knownCount);
+        setCompressionDone(newlyDone);
+
+        if (newlyDone >= expectedCount) {
+          // Preload every new image so the gallery appears instantly with real content
+          const newPhotos = data.slice(0, newlyDone);
+          await Promise.all(
+            newPhotos.map(
+              (img) =>
+                new Promise<void>((res) => {
+                  const el = new Image();
+                  el.onload = () => res();
+                  el.onerror = () => res();
+                  el.src = img.url;
+                })
+            )
+          );
+          setImages(data);
+          stopPolling();
+          setUploadStage('done');
+          setTimeout(clearUpload, 1000);
+        }
+      } catch { /* ignore transient errors */ }
       if (pollCountRef.current >= MAX_POLLS) { stopPolling(); clearUpload(); }
     }, 5000);
   };
 
   const handleUpload = async () => {
     if (pendingFiles.length === 0) return;
+    const total = pendingFiles.length;
+    uploadTotalRef.current = total;
+    setCompressionDone(0);
     setUploadStage('uploading');
     try {
-      for (let i = 0; i < pendingFiles.length; i++) {
+      for (let i = 0; i < total; i++) {
         setUploadedCount(i + 1);
         const file = pendingFiles[i];
         const formData = new FormData();
@@ -256,7 +283,7 @@ export default function App() {
         if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
       }
       setUploadStage('processing');
-      startPollingForResults(images.length, activeFolder);
+      startPollingForResults(images.length, activeFolder, total);
     } catch (err) { console.error(err); setUploadStage('idle'); }
   };
 
@@ -412,6 +439,7 @@ export default function App() {
                     className="relative aspect-square rounded-2xl overflow-hidden bg-white/5"
                   >
                     <img src={previewUrls[i]} alt={file.name} className="w-full h-full object-cover" />
+                    {/* Uploading phase: show check per uploaded file, spinner on current */}
                     {uploadStage === 'uploading' && i < uploadedCount && (
                       <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
                         <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 22 }}>
@@ -422,6 +450,24 @@ export default function App() {
                     {uploadStage === 'uploading' && i === uploadedCount && (
                       <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                         <Spinner className="w-6 h-6 text-white" />
+                      </div>
+                    )}
+                    {/* Processing phase: show check for already-compressed, pulsing ring for pending */}
+                    {uploadStage === 'processing' && i < compressionDone && (
+                      <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+                        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 380, damping: 22 }}>
+                          <Check className="w-6 h-6 text-emerald-400" strokeWidth={3} />
+                        </motion.div>
+                      </div>
+                    )}
+                    {uploadStage === 'processing' && i >= compressionDone && (
+                      <div className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center gap-1.5">
+                        <Spinner className="w-5 h-5 text-white/70" />
+                      </div>
+                    )}
+                    {uploadStage === 'done' && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <Check className="w-6 h-6 text-emerald-400" strokeWidth={3} />
                       </div>
                     )}
                     {!isProcessing && (
@@ -448,12 +494,25 @@ export default function App() {
                 )}
               </div>
 
-              <p className="text-white/35 text-sm mt-4">
-                {uploadStage === 'uploading' ? `Uploading ${uploadedCount} of ${pendingFiles.length}…`
-                  : uploadStage === 'processing' ? `Compressing ${pendingFiles.length} photo${pendingFiles.length !== 1 ? 's' : ''}… may take a minute`
-                  : uploadStage === 'done' ? `${pendingFiles.length} photo${pendingFiles.length !== 1 ? 's' : ''} ready!`
-                  : `${pendingFiles.length} photo${pendingFiles.length !== 1 ? 's' : ''} selected`}
-              </p>
+              <div className="mt-4 flex items-center gap-2">
+                {uploadStage === 'processing' && (
+                  <Spinner className="w-3.5 h-3.5 text-white/40 flex-shrink-0" />
+                )}
+                {uploadStage === 'done' && (
+                  <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" strokeWidth={3} />
+                )}
+                <p className="text-white/40 text-sm">
+                  {uploadStage === 'uploading'
+                    ? `Uploading ${uploadedCount} of ${pendingFiles.length}…`
+                    : uploadStage === 'processing'
+                    ? compressionDone > 0
+                      ? `Compressed ${compressionDone} of ${uploadTotalRef.current}… checking every 5s`
+                      : `Compressing ${uploadTotalRef.current} photo${uploadTotalRef.current !== 1 ? 's' : ''}… this may take a minute`
+                    : uploadStage === 'done'
+                    ? `All ${uploadTotalRef.current} photo${uploadTotalRef.current !== 1 ? 's' : ''} ready — loading…`
+                    : `${pendingFiles.length} photo${pendingFiles.length !== 1 ? 's' : ''} selected`}
+                </p>
+              </div>
             </div>
           )}
 
@@ -511,7 +570,14 @@ export default function App() {
               >
                 {uploadStage === 'idle' && <><Upload className="w-5 h-5" />Upload {pendingFiles.length} photo{pendingFiles.length !== 1 ? 's' : ''}</>}
                 {uploadStage === 'uploading' && <><Spinner className="w-5 h-5" />Uploading {uploadedCount} of {pendingFiles.length}…</>}
-                {isCompressing && <><Spinner className="w-5 h-5" />Compressing…</>}
+                {isCompressing && (
+                  <>
+                    <Spinner className="w-5 h-5" />
+                    {compressionDone > 0
+                      ? `${compressionDone} / ${uploadTotalRef.current} compressed…`
+                      : 'Compressing…'}
+                  </>
+                )}
                 {uploadStage === 'done' && <><Check className="w-5 h-5" />Done!</>}
               </button>
             )}
