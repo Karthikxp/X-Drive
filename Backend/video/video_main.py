@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 import sys
 import argparse
 import cv2
@@ -37,6 +39,7 @@ def main():
     parser.add_argument("--clarity_reduction", type=float, default=0.9, help="Reduction factor for salient clarity")
     parser.add_argument("--use_yolo", action="store_true", default=True, help="Use YOLO segmentation to enhance saliency")
     parser.add_argument("--use_spectral", action="store_true", default=True, help="Use Spectral Residual saliency to enhance")
+    parser.add_argument("--storage_dir", type=str, default=None, help="Directory to save the compressed video and stats JSON (overrides output_dir for final outputs)")
 
     args = parser.parse_args()
 
@@ -155,7 +158,9 @@ def main():
 
     # 6. Reconstruct video
     print(f"--- Step 3: Reconstructing video from processed frames (FFmpeg H.265) ---")
-    output_video_path = os.path.join(args.output_dir, f"{video_name}_compressed.mp4")
+    final_dir = args.storage_dir if args.storage_dir else args.output_dir
+    os.makedirs(final_dir, exist_ok=True)
+    output_video_path = os.path.join(final_dir, f"{video_name}_compressed.mp4")
     frames_to_video_ffmpeg(processed_frames_dir, output_video_path, fps, crf=args.crf, preset=args.preset)
 
     # 7. Video Compression Metrics
@@ -171,10 +176,26 @@ def main():
 
     print(f"Saved compressed video to {output_video_path}")
 
-    # Optional: Clean up temp frames
-    # import shutil
-    # shutil.rmtree(temp_frames_dir)
-    # shutil.rmtree(processed_frames_dir)
+    # Save sidecar stats JSON next to the compressed video
+    stats = {"originalSize": orig_size, "compressedSize": comp_size, "ratio": round(ratio, 2)}
+    stats_path = os.path.join(final_dir, f"{video_name}_stats.json")
+    with open(stats_path, 'w') as f:
+        json.dump(stats, f)
+    print(f"Saved stats to {stats_path}")
+
+    # Clean up temp frame directories
+    try:
+        shutil.rmtree(temp_frames_dir)
+        shutil.rmtree(processed_frames_dir)
+    except OSError as e:
+        print(f"Warning: could not clean up temp frames: {e}")
+
+    # Delete the original input video (no originals needed for video)
+    try:
+        os.remove(args.input)
+        print(f"Cleaned up input file: {args.input}")
+    except OSError as e:
+        print(f"Warning: could not remove input file {args.input}: {e}")
 
     overall_end_time = time.time()
     duration = overall_end_time - overall_start_time

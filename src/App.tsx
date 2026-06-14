@@ -1,4 +1,4 @@
-import { BarChart2, Check, ChevronLeft, ChevronRight, Columns2, Download, Folder, Image as ImageIcon, Plus, Trash2, Upload, X } from 'lucide-react';
+import { BarChart2, Check, ChevronLeft, ChevronRight, Columns2, Download, Folder, Image as ImageIcon, Play, Plus, Trash2, Upload, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './lib/utils';
@@ -11,6 +11,7 @@ interface ImageData {
   id: string;
   url: string;
   title: string;
+  type?: 'image' | 'video';
   size?: number;
   originalSize?: number;
   ratio?: number;
@@ -241,12 +242,13 @@ export default function App() {
         setCompressionDone(newlyDone);
 
         if (newlyDone >= expectedCount) {
-          // Preload every new image so the gallery appears instantly with real content
+          // Preload new images so the gallery appears instantly (skip videos)
           const newPhotos = data.slice(0, newlyDone);
           await Promise.all(
             newPhotos.map(
               (img) =>
                 new Promise<void>((res) => {
+                  if (img.type === 'video') { res(); return; }
                   const el = new Image();
                   el.onload = () => res();
                   el.onerror = () => res();
@@ -410,7 +412,7 @@ export default function App() {
         <div className="flex-1 flex flex-col w-full max-w-md mx-auto px-6 pb-8">
           <h1 className="text-4xl font-bold tracking-tight mb-6">File upload</h1>
 
-          <input type="file" accept="image/*" multiple className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+          <input type="file" accept="image/*,video/*" multiple className="hidden" ref={fileInputRef} onChange={handleFileChange} />
 
           {!hasFiles ? (
             <motion.button
@@ -425,12 +427,14 @@ export default function App() {
               >
                 <Folder className="w-16 h-16 text-white/35" strokeWidth={1} />
               </motion.div>
-              <p className="text-sm font-medium text-white/40">Tap to choose photos</p>
+              <p className="text-sm font-medium text-white/40">Tap to choose files</p>
             </motion.button>
           ) : (
             <div className="flex-1 overflow-y-auto">
               <div className="grid grid-cols-3 gap-2">
-                {pendingFiles.map((file, i) => (
+                {pendingFiles.map((file, i) => {
+                  const isVideoPreview = file.type.startsWith('video/');
+                  return (
                   <motion.div
                     key={`${file.name}-${i}`}
                     initial={{ opacity: 0, scale: 0.82 }}
@@ -438,7 +442,18 @@ export default function App() {
                     transition={{ duration: 0.22, delay: i * 0.04, ease: [0.23, 1, 0.32, 1] }}
                     className="relative aspect-square rounded-2xl overflow-hidden bg-white/5"
                   >
-                    <img src={previewUrls[i]} alt={file.name} className="w-full h-full object-cover" />
+                    {isVideoPreview ? (
+                      <video src={previewUrls[i]} muted preload="metadata" className="w-full h-full object-cover" />
+                    ) : (
+                      <img src={previewUrls[i]} alt={file.name} className="w-full h-full object-cover" />
+                    )}
+                    {isVideoPreview && (
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
+                          <Play className="w-3.5 h-3.5 text-white ml-0.5" fill="currentColor" />
+                        </div>
+                      </div>
+                    )}
                     {/* Uploading phase: show check per uploaded file, spinner on current */}
                     {uploadStage === 'uploading' && i < uploadedCount && (
                       <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
@@ -482,7 +497,8 @@ export default function App() {
                       <p className="text-white/75 text-[10px] truncate">{formatSize(file.size)}</p>
                     </div>
                   </motion.div>
-                ))}
+                  );
+                })}
                 {!isProcessing && (
                   <button
                     onClick={() => fileInputRef.current?.click()}
@@ -506,11 +522,11 @@ export default function App() {
                     ? `Uploading ${uploadedCount} of ${pendingFiles.length}…`
                     : uploadStage === 'processing'
                     ? compressionDone > 0
-                      ? `Compressed ${compressionDone} of ${uploadTotalRef.current}… checking every 5s`
-                      : `Compressing ${uploadTotalRef.current} photo${uploadTotalRef.current !== 1 ? 's' : ''}… this may take a minute`
+                      ? `Processed ${compressionDone} of ${uploadTotalRef.current}… checking every 5s`
+                      : `Processing ${uploadTotalRef.current} file${uploadTotalRef.current !== 1 ? 's' : ''}… this may take a minute`
                     : uploadStage === 'done'
-                    ? `All ${uploadTotalRef.current} photo${uploadTotalRef.current !== 1 ? 's' : ''} ready — loading…`
-                    : `${pendingFiles.length} photo${pendingFiles.length !== 1 ? 's' : ''} selected`}
+                    ? `All ${uploadTotalRef.current} file${uploadTotalRef.current !== 1 ? 's' : ''} ready — loading…`
+                    : `${pendingFiles.length} file${pendingFiles.length !== 1 ? 's' : ''} selected`}
                 </p>
               </div>
             </div>
@@ -572,14 +588,14 @@ export default function App() {
                   uploadStage === 'done'     && 'bg-emerald-500/18 text-emerald-300 cursor-not-allowed'
                 )}
               >
-                {uploadStage === 'idle' && <><Upload className="w-5 h-5" />Upload {pendingFiles.length} photo{pendingFiles.length !== 1 ? 's' : ''}</>}
+                {uploadStage === 'idle' && <><Upload className="w-5 h-5" />Upload {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''}</>}
                 {uploadStage === 'uploading' && <><Spinner className="w-5 h-5" />Uploading {uploadedCount} of {pendingFiles.length}…</>}
                 {isCompressing && (
                   <>
                     <Spinner className="w-5 h-5" />
                     {compressionDone > 0
-                      ? `${compressionDone} / ${uploadTotalRef.current} compressed…`
-                      : 'Compressing…'}
+                      ? `${compressionDone} / ${uploadTotalRef.current} processed…`
+                      : 'Processing…'}
                   </>
                 )}
                 {uploadStage === 'done' && <><Check className="w-5 h-5" />Done!</>}
@@ -597,6 +613,7 @@ export default function App() {
   if (currentScreen === 'view' && selectedImage) {
     const hasPrev = selectedIndex > 0;
     const hasNext = selectedIndex < images.length - 1;
+    const isVideoItem = selectedImage.type === 'video';
 
     const slideVariants = {
       enter: (dir: number) => ({ x: dir >= 0 ? '100%' : '-100%', opacity: 0 }),
@@ -626,13 +643,13 @@ export default function App() {
           <div className="flex items-center gap-2">
             <a
               href={selectedImage.url}
-              download={selectedImage.title + '.avif'}
+              download={isVideoItem ? selectedImage.title + '.mp4' : selectedImage.title + '.avif'}
               className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center justify-center"
               title="Download"
             >
               <Download className="w-4 h-4 text-white/70" />
             </a>
-            {selectedImage.originalUrl && (
+            {!isVideoItem && selectedImage.originalUrl && (
               <button
                 onClick={() => { setShowingSlider(true); setShowingSummary(false); setConfirmingDelete(false); setSliderPos(50); }}
                 className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center justify-center"
@@ -641,14 +658,16 @@ export default function App() {
                 <Columns2 className="w-4 h-4 text-white/70" />
               </button>
             )}
-            <button
-              onClick={() => { setShowingSummary(true); setShowingSlider(false); setConfirmingDelete(false); }}
-              className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-1.5"
-              title="Visualize compression"
-            >
-              <BarChart2 className="w-4 h-4 text-white/70" />
-              <span className="text-white/70 text-xs font-medium">Visualize</span>
-            </button>
+            {!isVideoItem && (
+              <button
+                onClick={() => { setShowingSummary(true); setShowingSlider(false); setConfirmingDelete(false); }}
+                className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-1.5"
+                title="Visualize compression"
+              >
+                <BarChart2 className="w-4 h-4 text-white/70" />
+                <span className="text-white/70 text-xs font-medium">Visualize</span>
+              </button>
+            )}
             <button
               onClick={() => setConfirmingDelete(true)}
               className="w-9 h-9 rounded-full bg-white/10 hover:bg-red-500/30 transition-colors flex items-center justify-center"
@@ -670,22 +689,35 @@ export default function App() {
               animate="center"
               exit="exit"
               transition={{ type: 'spring', stiffness: 350, damping: 36, mass: 0.8 }}
-              drag="x"
+              drag={isVideoItem ? false : 'x'}
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.12}
               onDragEnd={(_, info) => {
+                if (isVideoItem) return;
                 const swipedFar = Math.abs(info.offset.x) > 70;
                 const swipedFast = Math.abs(info.velocity.x) > 400;
                 if (swipedFar || swipedFast) { if (info.offset.x < 0) goNext(); else goPrev(); }
               }}
-              className="absolute inset-0 flex items-center justify-center px-4 py-2 cursor-grab active:cursor-grabbing"
+              className={cn(
+                'absolute inset-0 flex items-center justify-center px-4 py-2',
+                !isVideoItem && 'cursor-grab active:cursor-grabbing'
+              )}
             >
-              <img
-                src={selectedImage.url}
-                alt={selectedImage.title}
-                className="max-w-full max-h-full object-contain rounded-2xl select-none"
-                draggable={false}
-              />
+              {isVideoItem ? (
+                <video
+                  src={selectedImage.url}
+                  controls
+                  className="max-w-full max-h-full rounded-2xl"
+                  style={{ maxHeight: 'calc(100vh - 200px)' }}
+                />
+              ) : (
+                <img
+                  src={selectedImage.url}
+                  alt={selectedImage.title}
+                  className="max-w-full max-h-full object-contain rounded-2xl select-none"
+                  draggable={false}
+                />
+              )}
             </motion.div>
           </AnimatePresence>
 
@@ -839,7 +871,7 @@ export default function App() {
               transition={{ duration: 0.2 }}
               className="absolute inset-x-0 bottom-0 z-30 px-6 pb-10 pt-6 bg-gradient-to-t from-black via-black/90 to-transparent"
             >
-              <p className="text-white text-lg font-semibold mb-1">Delete this photo?</p>
+              <p className="text-white text-lg font-semibold mb-1">Delete this {isVideoItem ? 'video' : 'photo'}?</p>
               <p className="text-white/40 text-sm mb-6">
                 This will permanently remove it from <span className="text-white/60 font-medium">{decodeURIComponent(selectedImage.url.split('/')[2] ?? '')}</span>.
               </p>
@@ -903,7 +935,7 @@ export default function App() {
           <div className="flex items-baseline justify-between mb-4">
             <h2 className="text-2xl font-bold tracking-tight">Albums</h2>
             {images.length > 0 && (
-              <span className="text-sm text-black/35 font-medium">{images.length} photo{images.length !== 1 ? 's' : ''}</span>
+              <span className="text-sm text-black/35 font-medium">{images.length} file{images.length !== 1 ? 's' : ''}</span>
             )}
           </div>
 
@@ -955,15 +987,15 @@ export default function App() {
               >
                 <ImageIcon className="w-9 h-9 text-gray-400" strokeWidth={1.5} />
               </motion.div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">No photos yet</h3>
-              <p className="text-gray-400 text-sm mb-8">Upload your first photo to get started</p>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">No files yet</h3>
+              <p className="text-gray-400 text-sm mb-8">Upload your first photo or video to get started</p>
               <motion.button
                 whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => setCurrentScreen('upload')}
                 className="px-6 py-3 bg-black text-white rounded-full font-semibold text-sm"
               >
-                Upload a photo
+                Upload a file
               </motion.button>
             </motion.div>
           ) : (
@@ -988,13 +1020,29 @@ export default function App() {
                     )}
                     style={{ willChange: 'transform' }}
                   >
-                    {/* Image */}
-                    <img
-                      src={img.url}
-                      alt={img.title}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      loading="lazy"
-                    />
+                    {/* Media */}
+                    {img.type === 'video' ? (
+                      <video
+                        src={img.url}
+                        muted
+                        preload="metadata"
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    ) : (
+                      <img
+                        src={img.url}
+                        alt={img.title}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    )}
+                    {img.type === 'video' && (
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="w-11 h-11 rounded-full bg-black/45 backdrop-blur-sm flex items-center justify-center">
+                          <Play className="w-4 h-4 text-white ml-0.5" fill="currentColor" />
+                        </div>
+                      </div>
+                    )}
 
                     {/* Hover gradient overlay */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/0 to-black/0 opacity-0 group-hover:opacity-100 transition-opacity duration-250 pointer-events-none" />
